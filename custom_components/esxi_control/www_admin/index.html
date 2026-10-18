@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>虚拟机管理 · __HOST_NAME__</title>
+<style>
+  :root {
+    --bg: #11151c;
+    --panel: #202a38;
+    --panel2: #2a3646;
+    --line: #33425a;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+    --tpl: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13.5px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, input, select { font: inherit; }
+  button {
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #34425a; border-color: #46587a; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #388bfd; }
+  button.danger { color: #ffd7d4; border-color: rgba(248,81,73,.5); }
+  button.danger:hover:not(:disabled) { background: rgba(248,81,73,.18); }
+  button.tpl { color: #e4d4ff; border-color: rgba(188,140,255,.5); }
+  button.tpl.on { background: rgba(188,140,255,.18); }
+  button.sm { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
+  input[type=text], input[type=number], input[type=search], select {
+    background: #0d1117; color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+    min-width: 0;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  label { color: var(--muted); font-size: 12.5px; }
+
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    padding-top: calc(10px + env(safe-area-inset-top));
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; min-width: 0; }
+  header .host { color: var(--accent); }
+  .spacer { flex: 1; }
+  #hostinfo { color: var(--muted); font-size: 12.5px; margin-left: auto;
+    min-width: 0; }
+  .hdr-acts { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .act-ico { display: none; }
+  .act-short { display: none; }
+
+  main { flex: 1 1 auto; overflow: auto; padding: 12px 14px; }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .toolbar input[type=search] { width: 220px; }
+  .spinner {
+    width: 15px; height: 15px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%;
+    display: inline-block; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line);
+    vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px;
+    background: var(--panel2); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(88,166,255,.05); }
+  .name-cell { font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(63,185,80,.7); }
+  .dot.off { background: #6e7681; }
+  .dot.susp { background: var(--warn); box-shadow: 0 0 6px rgba(210,153,34,.7); }
+  .dot.invalid { background: var(--danger); }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 7px;
+    border-radius: 10px; border: 1px solid var(--line); color: var(--muted);
+    margin-left: 4px; vertical-align: middle; }
+  .badge.tpl { color: var(--tpl); border-color: rgba(188,140,255,.55);
+    background: rgba(188,140,255,.1); }
+  .badge.snap { color: var(--warn); border-color: rgba(210,153,34,.55);
+    background: rgba(210,153,34,.1); }
+  .disk-line { font-size: 12px; color: var(--muted); }
+  .disk-line .np { color: var(--tpl); }
+  .acts { display: flex; gap: 5px; justify-content: flex-end; }
+
+  /* 任务进度 */
+  #jobbar { display: none; margin-bottom: 10px; padding: 10px 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  #jobbar.show { display: block; }
+  .jobhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .progress { height: 6px; background: #0d1117; border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--accent); width: 0;
+    transition: width .3s; }
+  .jobitems { margin-top: 6px; max-height: 130px; overflow: auto;
+    font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+  .jobitems .err { color: var(--danger); white-space: pre-wrap; }
+
+  /* 弹窗 */
+  #mask { display: none; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,.55); }
+  #mask.show { display: block; }
+  .modal { position: fixed; z-index: 51; left: 50%; top: 50%;
+    transform: translate(-50%,-50%); width: min(680px, 94vw); max-height: 92vh;
+    display: none; flex-direction: column; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 14px 48px rgba(0,0,0,.55); }
+  .modal.show { display: flex; }
+  .modal.wide { width: min(780px, 96vw); }
+  .modal-h { padding: 12px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14.5px;
+    display: flex; align-items: center; }
+  .modal-b { padding: 14px 16px; overflow: auto; }
+  .modal-f { padding: 10px 16px; background: var(--panel);
+    border-top: 1px solid var(--line); display: flex; gap: 8px;
+    justify-content: flex-end; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .grid .full { grid-column: 1 / -1; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field input, .field select { width: 100%; }
+  .field input[type=radio], .field input[type=checkbox] { width: auto; }
+  .radio-row { display: flex; gap: 14px; padding: 4px 0; flex-wrap: wrap; }
+  .radio-row label { display: inline-flex; align-items: center; gap: 5px;
+    color: var(--text); cursor: pointer; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .hint.warn { color: var(--warn); }
+  .hint.danger { color: var(--danger); }
+  .hr { border-top: 1px solid var(--line); margin: 12px 0; }
+  .sub-title { font-size: 12.5px; color: var(--accent); font-weight: 600;
+    margin-bottom: 6px; }
+  .mini-list { border: 1px solid var(--line); border-radius: 8px; }
+  .mini-list .row { display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .mini-list .row:last-child { border-bottom: none; }
+  .mini-list .grow { flex: 1; min-width: 0; }
+  .disc-info { background: #0d1117; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: var(--muted); }
+  .disc-info b { color: var(--text); }
+  #toast { position: fixed; z-index: 80; left: 50%; bottom: 24px;
+    transform: translateX(-50%); display: none; max-width: 80%;
+    background: #2b3340; border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  #toast.err { border-color: rgba(248,81,73,.6); }
+  #toast.ok { border-color: rgba(63,185,80,.6); }
+
+  /* ================= 移动端适配 ================= */
+  @media (max-width: 760px) {
+    html, body { height: 100dvh; }
+    body { -webkit-text-size-adjust: 100%; }
+
+    /* 头部：标题 + 操作同一行，主机信息压成一行（点击展开） */
+    header {
+      flex-wrap: wrap; gap: 6px 8px;
+      padding: 7px 10px; padding-top: calc(7px + env(safe-area-inset-top));
+    }
+    header h1 { flex: 1 1 auto; font-size: 14px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hdr-acts { margin-left: auto; gap: 6px; }
+    .act-lbl, .act-full { display: none; }
+    .act-ico { display: inline-flex; }
+    .act-short { display: inline; }
+    #hostinfo {
+      order: 3; flex: 1 1 100%; margin-left: 0; font-size: 11.5px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    #hostinfo.expand { white-space: normal; overflow: visible; text-overflow: clip; }
+
+    main { padding: 0 8px 16px; }
+    .toolbar { position: sticky; top: 0; z-index: 5; gap: 6px;
+      padding: 8px 0; margin-bottom: 2px; background: var(--bg); }
+    .toolbar input[type=search] { width: auto; flex: 1 1 auto;
+      padding: 7px 10px; border-radius: 9px; }
+    #list-status { font-size: 11.5px; white-space: nowrap; }
+
+    /* 表格转卡片列表 */
+    table, thead, tbody, tr, td { display: block; }
+    table { border: none; background: transparent; border-radius: 0;
+      overflow: visible; }
+    thead { display: none; }
+    tr { position: relative; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px 12px 0; margin-bottom: 10px; }
+    tr:hover td { background: transparent; }
+    td { border: none; padding: 0; }
+
+    /* 标题行：名称 + 徽标 + 系统名（右侧留出状态胶囊位置） */
+    .name-cell { font-size: 14.5px; padding: 0 76px 9px 0;
+      border-bottom: 1px solid var(--line); }
+    .name-cell .muted { margin-top: 2px; }
+
+    /* 属性行：左标签（绝对定位，兼容状态点/多行硬盘等任意结构） */
+    td[data-label] { position: relative; padding: 5px 0 5px 5em; }
+    td[data-label]::before {
+      content: attr(data-label); position: absolute; left: 0; top: 5px;
+      width: 4.6em; color: var(--muted); font-size: 12px; line-height: 1.6;
+    }
+    tr > td[data-label="系统"] { display: none; }  /* 与标题下的系统名重复，窄屏省略 */
+
+    /* 电源状态 → 右上角胶囊（带状态色，不支持 :has 时退化为中性胶囊）
+       注意：必须排在通用 td[data-label] 之后，且用 tr > 提高权重，
+       因为 [attr=value] 与 [attr] 的优先级相同。 */
+    tr > td[data-label="电源"] {
+      position: absolute; top: 9px; right: 10px; left: auto;
+      display: inline-flex; align-items: center;
+      padding: 3px 9px 3px 8px; border: 1px solid var(--line);
+      border-radius: 999px; font-size: 11.5px; line-height: 1.45;
+      color: var(--text); background: rgba(255,255,255,.04);
+    }
+    tr > td[data-label="电源"]::before { content: none; }
+    tr > td[data-label="电源"] .dot { margin-right: 5px; }
+    tr > td[data-label="电源"]:has(.dot.on) {
+      color: var(--ok); border-color: rgba(63,185,80,.45);
+      background: rgba(63,185,80,.1); }
+    tr > td[data-label="电源"]:has(.dot.susp) {
+      color: var(--warn); border-color: rgba(210,153,34,.45);
+      background: rgba(210,153,34,.1); }
+    tr > td[data-label="电源"]:has(.dot.invalid) {
+      color: var(--danger); border-color: rgba(248,81,73,.45);
+      background: rgba(248,81,73,.1); }
+    .disk-line { color: var(--text); }
+    .disk-line + .disk-line { margin-top: 2px; }
+
+    /* 操作栏：一条分割线 + 等宽按钮 */
+    td:last-child:not([colspan]) { margin-top: 5px; padding: 9px 0 10px;
+      border-top: 1px solid var(--line); }
+    .acts { display: flex; gap: 6px; margin: 0; }
+    .acts button { flex: 1 1 0; min-width: 0; padding: 7px 6px; font-size: 12.5px; }
+
+    /* 编辑弹窗：硬盘/网卡条目 → 各自一张小卡片 */
+    .mini-list { border: none; border-radius: 0; }
+    .mini-list .row {
+      display: flex; flex-wrap: wrap; gap: 5px 14px; align-items: center;
+      background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 10px; margin-bottom: 7px;
+    }
+    .mini-list .row:last-child { border-bottom: 1px solid var(--line);
+      margin-bottom: 0; }
+    .mini-list .row .grow { flex: 1 1 100%; font-size: 13.5px; min-width: 0; }
+    .mini-list .row label { display: flex; align-items: center; gap: 7px;
+      min-height: 32px; min-width: 0; color: var(--text); }
+    .mini-list .row label.resize { flex: 1 1 100%; }  /* 扩容到 → 独占一行 */
+    .mini-list .row label input[type=checkbox] { width: 17px; height: 17px;
+      flex: 0 0 auto; accent-color: var(--accent); }
+    .mini-list .row .resize-gb { width: 88px; }
+    .mini-list .row .edit-pg { flex: 1 1 60%; width: auto; max-width: none; }
+
+    /* 加盘/加网卡：虚线框 + 标题，控件分两行铺满 */
+    .add-row { padding: 9px 10px; border: 1px dashed var(--line);
+      border-radius: 10px; }
+    .add-row::before { content: attr(data-label); flex: 0 0 100%;
+      color: var(--muted); font-size: 12px; margin-bottom: 1px; }
+    #e-addpg, #e-addds { min-width: 100%; }
+    #e-addsize, #e-addprov, #e-addnictype { flex: 1 1 auto; width: auto; }
+    #e-adddisk, #e-addnic { min-height: 34px; }
+    #d-confirm { width: 18px; height: 18px; accent-color: var(--accent); }
+
+    /* 弹窗内文字略放大，长提示更好读 */
+    .modal-b label, .modal-b .hint, .sub-title { font-size: 13px; }
+    .modal-b .hint.warn { line-height: 1.6; }
+
+    /* 触控目标放大；输入框 16px 防止 iOS 聚焦缩放 */
+    button.sm { padding: 4px 9px; font-size: 12.5px; }
+    input[type=text], input[type=number], input[type=search], select {
+      font-size: 16px;
+    }
+
+    /* 弹窗全屏 */
+    .modal, .modal.wide {
+      left: 0; top: 0; transform: none;
+      width: 100%; height: 100%; max-height: 100%;
+      border: none; border-radius: 0;
+    }
+    .modal-h { padding-top: calc(12px + env(safe-area-inset-top)); }
+    .modal-b { padding: 12px; }
+    .modal-f { padding: 10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+    .modal-f button { flex: 1; padding: 9px 12px; }
+    .grid { grid-template-columns: 1fr; gap: 10px; }
+
+    #toast { max-width: 92%; bottom: calc(16px + env(safe-area-inset-bottom)); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>虚拟机管理 · <span class="host">__HOST_NAME__</span></h1>
+  <div id="hostinfo"></div>
+  <div class="hdr-acts">
+    <button id="btn-refresh" class="sm" title="重新加载">
+      <svg class="act-ico" viewBox="0 0 24 24" width="15" height="15"
+        aria-hidden="true"><path fill="currentColor"
+        d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+      <span class="act-lbl">刷新</span>
+    </button>
+    <button id="btn-create" class="primary">
+      <span class="act-full">新建虚拟机</span><span class="act-short">新建</span>
+    </button>
+  </div>
+</header>
+<main>
+  <div id="jobbar">
+    <div class="jobhead">
+      <strong id="job-title">批量任务</strong>
+      <span id="job-count" class="muted"></span>
+      <span class="spacer" style="flex:1"></span>
+      <button id="job-cancel" class="sm danger">取消排队</button>
+      <button id="job-close" class="sm">关闭</button>
+    </div>
+    <div class="progress"><div id="job-bar"></div></div>
+    <div class="jobitems" id="job-items"></div>
+  </div>
+  <div class="toolbar">
+    <input type="search" id="filter" placeholder="筛选虚拟机名称…" />
+    <span id="list-status" class="muted"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th style="width:200px">名称</th><th>电源</th><th>客户机系统</th>
+      <th>CPU / 内存</th><th>硬盘</th><th>网卡</th><th style="width:230px"></th>
+    </tr></thead>
+    <tbody id="vmrows"><tr><td colspan="7" class="muted"
+      style="padding:24px;text-align:center">加载中…</td></tr></tbody>
+  </table>
+</main>
+
+<div id="mask"></div>
+
+<!-- 创建虚拟机 -->
+<div class="modal wide" id="modal-create">
+  <div class="modal-h">新建虚拟机</div>
+  <div class="modal-b">
+    <div class="grid">
+      <div class="field">
+        <label>创建方式</label>
+        <div class="radio-row">
+          <label><input type="radio" name="m-mode" value="single" checked /> 单台</label>
+          <label><input type="radio" name="m-mode" value="batch" /> 批量</label>
+        </div>
+      </div>
+      <div class="field" id="f-single-name">
+        <label>虚拟机名称</label>
+        <input type="text" id="c-name" placeholder="例如 web-server" />
+      </div>
+      <div class="field" id="f-batch" style="display:none">
+        <label>批量命名：前缀 / 起始序号 / 位数 / 数量</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="c-prefix" placeholder="pc-" style="flex:2" />
+          <input type="number" id="c-start" value="1" min="0" style="flex:1" />
+          <input type="number" id="c-pad" value="2" min="1" max="5" style="flex:1" />
+          <input type="number" id="c-count" value="3" min="1" max="99" style="flex:1" />
+        </div>
+        <div class="hint" id="c-names-preview"></div>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+    <div class="field">
+      <label>硬件配置来源</label>
+      <select id="c-profile"><option value="">手工配置（不复制现有虚拟机）</option></select>
+      <div class="hint" id="c-profile-hint"></div>
+    </div>
+
+    <div id="c-manual">
+      <div class="hr"></div>
+      <div class="grid">
+        <div class="field"><label>客户机操作系统</label><select id="c-guest"></select></div>
+        <div class="field"><label>固件</label>
+          <select id="c-firmware"><option value="bios">BIOS</option>
+            <option value="efi">EFI</option></select></div>
+        <div class="field"><label>CPU（核）</label><select id="c-cpu"></select></div>
+        <div class="field"><label>内存（MB）</label><input type="number" id="c-mem" value="2048" min="32" step="32" /></div>
+        <div class="field"><label>SCSI 控制器</label><select id="c-scsi"></select></div>
+        <div class="field"><label>网卡型号</label><select id="c-nictype"></select></div>
+      </div>
+    </div>
+
+    <div id="c-profiled" style="display:none">
+      <div class="hr"></div>
+      <div class="disc-info" id="c-profile-info"></div>
+    </div>
+
+    <div class="hr"></div>
+    <div class="sub-title">硬盘</div>
+    <div id="c-disk-source-manual">
+      <div class="radio-row">
+        <label><input type="radio" name="m-disk" value="new" checked /> 新建空白硬盘</label>
+      </div>
+    </div>
+    <div id="c-disk-source-profile" style="display:none">
+      <div class="radio-row">
+        <label><input type="radio" name="m-disk" value="new" checked /> 新建空白硬盘（仅继承硬件规格）</label>
+        <label><input type="radio" name="m-disk" value="clone" /> 完整克隆（复制系统与数据，源须关机）</label>
+        <label><input type="radio" name="m-disk" value="attach" /> 引用模板非持久母盘（多机共用，关机还原）</label>
+      </div>
+      <div class="field" id="c-attached-disk-field" style="display:none;margin-top:6px">
+        <label>引用母盘（来自样板虚拟机）</label>
+        <select id="c-attached-disk"></select>
+      </div>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <div class="field" id="c-size-field"><label>硬盘容量（GB）</label>
+        <input type="number" id="c-size" value="40" min="1" step="1" /></div>
+      <div class="field" id="c-prov-field"><label>置备类型</label>
+        <select id="c-prov"><option value="thin">Thin 精简置备</option>
+          <option value="thick">Thick 厚置备（延迟置零）</option></select></div>
+    </div>
+    <div class="hint" id="c-disk-hint"></div>
+
+    <div class="hr"></div>
+    <div class="grid">
+      <div class="field"><label>数据存储</label><select id="c-ds"></select></div>
+      <div class="field"><label>网络（端口组，不建网卡请留空）</label>
+        <select id="c-network"><option value="">— 不添加网卡 —</option></select></div>
+    </div>
+  </div>
+  <div class="modal-f">
+    <button id="c-cancel">取消</button>
+    <button id="c-submit" class="primary">创建</button>
+  </div>
+</div>
+
+<!-- 编辑硬件 -->
+<div class="modal wide" id="modal-edit">
+  <div class="modal-h">编辑硬件 · <span id="e-title"></span></div>
+  <div class="modal-b">
+    <div id="e-powerwarn" class="hint warn" style="margin-bottom:8px"></div>
+    <div class="grid">
+      <div class="field"><label>CPU（核）</label><select id="e-cpu"></select></div>
+      <div class="field"><label>内存（MB）</label><input type="number" id="e-mem" min="32" step="32" /></div>
+    </div>
+    <div class="hint" id="e-hothint"></div>
+
+    <div class="hr"></div>
+    <div class="sub-title">硬盘（只能扩容，不能缩小）</div>
+    <div class="mini-list" id="e-disks"></div>
+    <div class="add-row" data-label="添加硬盘" style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <input type="number" id="e-addsize" value="20" min="1" style="width:110px" title="新盘容量 GB" />
+      <select id="e-addprov" style="width:150px">
+        <option value="thin">Thin 精简</option><option value="thick">Thick 厚置备</option>
+      </select>
+      <select id="e-addds" style="flex:1;min-width:140px"></select>
+      <button class="sm" id="e-adddisk">＋ 添加硬盘</button>
+      <span id="e-addlist" class="hint"></span>
+    </div>
+
+    <div class="hr"></div>
+    <div class="sub-title">网卡</div>
+    <div class="mini-list" id="e-nics"></div>
+    <div class="add-row" data-label="添加网卡" style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <select id="e-addpg" style="flex:1"></select>
+      <select id="e-addnictype" style="width:150px"></select>
+      <button class="sm" id="e-addnic">＋ 添加网卡</button>
+      <span id="e-addniclist" class="hint"></span>
+    </div>
+  </div>
+  <div class="modal-f">
+    <button id="e-cancel">取消</button>
+    <button id="e-submit" class="primary">保存修改</button>
+  </div>
+</div>
+
+<!-- 删除确认 -->
+<div class="modal" id="modal-delete">
+  <div class="modal-h">删除虚拟机 · <span id="d-title"></span></div>
+  <div class="modal-b">
+    <div id="d-reason" class="hint danger" style="margin-bottom:10px"></div>
+    <div class="disc-info" id="d-plan"></div>
+    <div class="hr"></div>
+    <label style="display:flex;gap:8px;align-items:flex-start;color:var(--text)">
+      <input type="checkbox" id="d-confirm" style="margin-top:3px" />
+      <span>我已知晓此操作不可恢复，确认删除该虚拟机及其全部文件。</span>
+    </label>
+    <div class="field" style="margin-top:10px">
+      <label>请输入虚拟机名称以确认</label>
+      <input type="text" id="d-name-confirm" autocomplete="off" />
+    </div>
+  </div>
+  <div class="modal-f">
+    <button id="d-cancel">取消</button>
+    <button id="d-submit" class="danger" disabled>删除</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const API_PATH = "__ADMIN_API_PATH__";
+const INVENTORY_PATH = "__ADMIN_INVENTORY_PATH__";
+
+let INV = null;
+let editVm = null;
+const pendingAddDisks = [];
+const pendingAddNics = [];
+let jobTimer = null;
+
+const $ = (id) => document.getElementById(id);
+
+async function fetchInventory() {
+  // 清单路径在页面渲染时已单独签名（路径固定，不带可变查询参数）
+  const resp = await fetch(INVENTORY_PATH, { credentials: "same-origin" });
+  if (resp.status === 401) { showRelogin(); throw new Error("未授权"); }
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.error || ("HTTP " + resp.status));
+  }
+  return resp.json();
+}
+async function apiPost(body) {
+  const resp = await fetch(API_PATH, {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.status === 401) { showRelogin(); throw new Error("未授权"); }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) { throw new Error(data.error || ("HTTP " + resp.status)); }
+  return data;
+}
+
+function showRelogin() {
+  toast("登录签名已过期，请关闭本窗口后从设备页重新点「访问」进入", true);
+}
+let toastTimer = null;
+function toast(msg, isErr) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = isErr ? "err" : "ok";
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, isErr ? 6000 : 3500);
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+const POWER_CN = { poweredOn: "运行中", poweredOff: "已关机", suspended: "挂起中" };
+function powerCls(v) {
+  return v.state === "poweredOn" ? "on" : v.state === "suspended" ? "susp"
+    : v.state === "invalid" ? "invalid" : "off";
+}
+
+// ---------------- 清单渲染 ----------------
+async function loadInventory() {
+  $("list-status").textContent = "加载中…";
+  try {
+    INV = await fetchInventory();
+    render();
+  } catch (e) {
+    $("list-status").textContent = "";
+    $("vmrows").innerHTML = '<tr><td colspan="7" style="padding:24px;text-align:center" class="muted">'
+      + esc(e.message) + "</td></tr>";
+  }
+}
+function render() {
+  const h = INV.host;
+  const info = `${h.version.split(" ").slice(0, 3).join(" ")} · 剩余内存 ${h.mem_free_gb}GB · `
+    + INV.datastores.map((d) => `${d.name} ${d.free_gb}GB 可用`).join("，");
+  const infoEl = $("hostinfo");
+  infoEl.textContent = info;
+  infoEl.title = info;
+  infoEl.classList.remove("expand");
+  $("list-status").textContent = `${INV.vms.length} 台虚拟机`;
+  fillStaticSelects();
+  renderRows();
+}
+function renderRows() {
+  const kw = $("filter").value.trim().toLowerCase();
+  const rows = INV.vms
+    .filter((v) => !kw || v.name.toLowerCase().includes(kw))
+    .map((v) => {
+      if (v.state === "invalid") {
+        return `<tr><td class="name-cell">${esc(v.name)}</td>
+          <td data-label="电源"><span class="dot invalid"></span>配置失效</td>
+          <td colspan="4" class="muted">${esc(v.error || "无法读取配置")}</td>
+          <td><div class="acts"><button class="sm danger" disabled>删除</button></div></td></tr>`;
+      }
+      const tpl = v.is_template
+        ? '<span class="badge tpl">模板</span>' : "";
+      const snap = v.has_snapshots ? '<span class="badge snap">快照</span>' : "";
+      const disks = v.disks.map((d) => {
+        const tag = d.mode === "independent_nonpersistent"
+          ? '<span class="np">非持久</span>' : "持久";
+        const thin = d.thin ? "精简" : "厚";
+        return `<div class="disk-line">${esc(d.label)}：${d.capacity_gb}GB · ${tag} · ${thin}</div>`;
+      }).join("") || '<span class="muted">无硬盘</span>';
+      const nics = v.nics.map((n) =>
+        `<div class="disk-line">${esc(n.network || "?")}${n.connected ? "" : "（未连接）"}</div>`
+      ).join("") || '<span class="muted">无网卡</span>';
+      const running = v.state !== "poweredOff";
+      return `<tr>
+        <td class="name-cell">${esc(v.name)}${tpl}${snap}
+          <div class="muted">${esc(v.guest_os || v.guest_id || "")}</div></td>
+        <td data-label="电源"><span class="dot ${powerCls(v)}"></span>${POWER_CN[v.state] || v.state}</td>
+        <td class="muted" data-label="系统">${esc(v.guest_id)}</td>
+        <td data-label="CPU·内存">${v.cpu} 核<div class="muted">${v.mem_mb} MB</div></td>
+        <td data-label="硬盘">${disks}</td>
+        <td data-label="网卡">${nics}</td>
+        <td><div class="acts">
+          <button class="sm" data-act="edit" data-moid="${v.moid}">编辑</button>
+          <button class="sm tpl ${v.is_template ? "on" : ""}" data-act="tpl" data-moid="${v.moid}"
+            ${running ? "disabled title='需先关机'" : ""}>${v.is_template ? "取消模板" : "设为模板"}</button>
+          <button class="sm danger" data-act="del" data-moid="${v.moid}"
+            ${running ? "disabled title='运行中不能删除，请先关机'" : ""}>删除</button>
+        </div></td></tr>`;
+    }).join("");
+  $("vmrows").innerHTML = rows || '<tr><td colspan="7" class="muted" style="padding:20px;text-align:center">没有匹配的虚拟机</td></tr>';
+}
+
+// CPU 核数下拉：上限取主机逻辑核心数（不低于当前值），已存在同规模选项时不重建
+function cpuOptions(sel, current) {
+  const host = parseInt(INV.host.cpu_threads, 10) || 0;   // 主机逻辑核心数
+  const cur = parseInt(current, 10) || 0;
+  const max = host ? Math.max(host, cur) : Math.max(cur, 64);
+  if (sel.options.length !== max) {
+    let html = "";
+    for (let i = 1; i <= max; i++) {
+      html += `<option value="${i}">${i}</option>`;
+    }
+    sel.innerHTML = html;
+  }
+  sel.value = String(Math.min(Math.max(cur, 1), max));
+}
+function fillStaticSelects() {
+  const setOpts = (sel, items, keep) => {
+    const cur = keep ? sel.value : null;
+    sel.innerHTML = items.map((o) =>
+      `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join("");
+    if (cur) { sel.value = cur; }
+  };
+  setOpts($("c-guest"), INV.guest_choices.map((g) => [g.id, g.label]));
+  setOpts($("c-scsi"), INV.scsi_choices.map((g) => [g.id, g.label]));
+  setOpts($("c-nictype"), INV.nic_choices.map((g) => [g.id, g.label]));
+  $("c-ds").innerHTML = INV.datastores.map((d) =>
+    `<option value="${esc(d.name)}">${esc(d.name)}（剩余 ${d.free_gb}GB）</option>`).join("");
+  $("e-addds").innerHTML = $("c-ds").innerHTML;
+  $("c-network").innerHTML = '<option value="">— 不添加网卡 —</option>'
+    + INV.portgroups.map((p) => `<option>${esc(p.name)}</option>`).join("");
+  $("e-addpg").innerHTML = INV.portgroups.map((p) =>
+    `<option>${esc(p.name)}</option>`).join("");
+  $("e-addnictype").innerHTML = INV.nic_choices.map((g) =>
+    `<option value="${esc(g.id)}">${esc(g.label)}</option>`).join("");
+  $("c-profile").innerHTML = '<option value="">手工配置（不复制现有虚拟机）</option>'
+    + INV.vms.filter((v) => v.state !== "invalid").map((v) =>
+      `<option value="${v.moid}">${esc(v.name)}（${v.cpu}核/${v.mem_mb}MB·${v.guest_id}）</option>`).join("");
+  cpuOptions($("c-cpu"), parseInt($("c-cpu").value, 10) || 2);
+}
+
+// ---------------- 弹窗通用 ----------------
+function openModal(id) {
+  $("mask").classList.add("show");
+  $(id).classList.add("show");
+}
+function closeModals() {
+  $("mask").classList.remove("show");
+  document.querySelectorAll(".modal").forEach((m) => m.classList.remove("show"));
+}
+$("mask").addEventListener("click", closeModals);
+
+// ---------------- 创建表单 ----------------
+$("btn-create").addEventListener("click", () => {
+  $("c-name").value = ""; $("c-prefix").value = "pc-";
+  $("c-start").value = 1; $("c-pad").value = 2; $("c-count").value = 3;
+  $("c-profile").value = "";
+  onProfileChange(); onModeChange(); onDiskSourceChange();
+  updateNamesPreview();
+  openModal("modal-create");
+});
+document.querySelectorAll('input[name="m-mode"]').forEach((r) =>
+  r.addEventListener("change", onModeChange));
+["c-prefix", "c-start", "c-pad", "c-count"].forEach((id) =>
+  $(id).addEventListener("input", updateNamesPreview));
+$("c-profile").addEventListener("change", onProfileChange);
+document.querySelectorAll('input[name="m-disk"]').forEach((r) =>
+  r.addEventListener("change", onDiskSourceChange));
+
+function batchMode() {
+  return document.querySelector('input[name="m-mode"]:checked').value === "batch";
+}
+function diskSource() {
+  const checked = document.querySelector('input[name="m-disk"]:checked');
+  return checked ? checked.value : "new";
+}
+function plannedNames() {
+  if (!batchMode()) {
+    const n = $("c-name").value.trim();
+    return n ? [n] : [];
+  }
+  const prefix = $("c-prefix").value;
+  const start = parseInt($("c-start").value, 10) || 0;
+  const pad = Math.max(1, parseInt($("c-pad").value, 10) || 1);
+  const count = Math.min(99, Math.max(1, parseInt($("c-count").value, 10) || 1));
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push(prefix + String(start + i).padStart(pad, "0"));
+  }
+  return out;
+}
+function updateNamesPreview() {
+  const names = plannedNames();
+  const dup = names.filter((n) => INV.vms.some((v) =>
+    v.state !== "invalid" && v.name === n));
+  $("c-names-preview").textContent = names.length
+    ? "将创建：" + names.slice(0, 6).join("、") + (names.length > 6 ? " 等 " + names.length + " 台" : "") : "";
+  $("c-names-preview").className = dup.length
+    ? "hint danger" : "hint";
+  if (dup.length) {
+    $("c-names-preview").textContent += "　⚠ 名称已存在：" + dup.join("、");
+  }
+}
+function onModeChange() {
+  const batch = batchMode();
+  $("f-single-name").style.display = batch ? "none" : "";
+  $("f-batch").style.display = batch ? "" : "none";
+  updateNamesPreview();
+}
+function onProfileChange() {
+  const moid = $("c-profile").value;
+  const vm = INV.vms.find((v) => v.moid === moid);
+  $("c-manual").style.display = vm ? "none" : "";
+  $("c-profiled").style.display = vm ? "" : "none";
+  $("c-disk-source-manual").style.display = vm ? "none" : "";
+  $("c-disk-source-profile").style.display = vm ? "" : "";
+  $("c-profile-hint").textContent = "";
+  if (vm) {
+    const ctrls = vm.controllers.map((c) => esc(c.label)).join("、") || "默认";
+    const nics = vm.nics.map((n) =>
+      `${n.adapter}→${esc(n.network || "?")}`).join("、") || "无";
+    $("c-profile-info").innerHTML =
+      `<b>${esc(vm.name)}</b>：${esc(vm.guest_id)} · ${vm.cpu} 核 · ${vm.mem_mb}MB · `
+      + `${esc(vm.firmware.toUpperCase())}<br>控制器：${ctrls}<br>网卡：${nics}`
+      + `<br>硬盘：${vm.disks.map((d) =>
+        `${esc(d.label)} ${d.capacity_gb}GB/${d.mode === "independent_nonpersistent" ? "非持久" : "持久"}`).join("、")}`;
+    $("c-attached-disk").innerHTML = vm.disks.map((d) =>
+      `<option value="${d.key}">${esc(d.label)}（${d.capacity_gb}GB，${esc(d.file || "")}）</option>`
+    ).join("") || '<option value="">样板机无硬盘</option>';
+    // 默认容量与存储跟随样板第一块盘
+    if (vm.disks.length) {
+      $("c-size").value = vm.disks[0].capacity_gb;
+      if (vm.vmx_ds && INV.datastores.some((d) => d.name === vm.vmx_ds)) {
+        $("c-ds").value = vm.vmx_ds;
+      }
+    }
+    $("c-profile-hint").textContent =
+      vm.state !== "poweredOff"
+        ? "⚠ 样板机正在运行：「完整克隆」与「引用母盘」要求其关机；仅「新建空白盘」可用"
+        : "";
+  }
+  onDiskSourceChange();
+}
+function onDiskSourceChange() {
+  const src = diskSource();
+  const prof = $("c-profile").value;
+  $("c-attached-disk-field").style.display =
+    (prof && src === "attach") ? "" : "none";
+  $("c-size-field").style.display = src === "attach" ? "none" : "";
+  $("c-prov-field").style.display = src === "new" ? "" : "none";
+  let hint = "";
+  if (src === "clone") {
+    hint = "完整克隆：源虚拟机会被复制一份（含系统与数据），每台占用与源盘等量空间，耗时随磁盘大小增加；批量克隆请确认存储空间充足。";
+  } else if (src === "attach") {
+    hint = "引用母盘：所有新虚拟机共享同一个只读母盘，开机期间各自产生独立的临时更改，关机或硬复位后全部丢弃。母盘属主虚拟机必须保持关机。";
+  }
+  $("c-disk-hint").textContent = hint;
+  $("c-disk-hint").className = src === "new" ? "hint" : "hint warn";
+}
+
+$("c-cancel").addEventListener("click", closeModals);
+$("c-submit").addEventListener("click", async () => {
+  const names = plannedNames();
+  if (!names.length) { toast("请填写虚拟机名称", true); return; }
+  const dup = names.filter((n) => INV.vms.some((v) =>
+    v.state !== "invalid" && v.name === n));
+  if (dup.length) { toast("名称已存在：" + dup.join("、"), true); return; }
+  const profileMoid = $("c-profile").value;
+  const ds = $("c-ds").value;
+  if (!ds) { toast("请选择数据存储", true); return; }
+  let payload;
+  if (profileMoid) {
+    const src = diskSource();
+    const profile = { src_moid: profileMoid, disk_source: src, datastore: ds };
+    if (src === "new") { profile.disk_size_gb = parseFloat($("c-size").value); }
+    if (src === "attach") {
+      profile.src_disk_key = parseInt($("c-attached-disk").value, 10);
+    }
+    payload = { op: "create_batch", names, profile };
+  } else {
+    payload = {
+      op: "create_batch", names,
+      vm: {
+        guest_id: $("c-guest").value,
+        firmware: $("c-firmware").value,
+        cpu: parseInt($("c-cpu").value, 10),
+        memory_mb: parseInt($("c-mem").value, 10),
+        scsi: $("c-scsi").value,
+        nic_adapter: $("c-nictype").value,
+        datastore: ds,
+        disk_size_gb: parseFloat($("c-size").value),
+        provisioning: $("c-prov").value,
+        network: $("c-network").value || null,
+      },
+    };
+  }
+  $("c-submit").disabled = true;
+  try {
+    const res = await apiPost(payload);
+    closeModals();
+    toast(`已提交 ${names.length} 台创建任务`);
+    startJobPolling(res.job_id);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    $("c-submit").disabled = false;
+  }
+});
+
+// ---------------- 行内操作 ----------------
+$("vmrows").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) { return; }
+  const vm = INV.vms.find((v) => v.moid === btn.dataset.moid);
+  if (!vm) { return; }
+  if (btn.dataset.act === "edit") { openEdit(vm); }
+  if (btn.dataset.act === "del") { openDelete(vm); }
+  if (btn.dataset.act === "tpl") {
+    const enable = !vm.is_template;
+    if (!confirm(`${enable ? "设为模板" : "取消模板"}：${vm.name}？\n`
+      + "该虚拟机必须已关机且无快照；" + (enable
+        ? "其全部硬盘将切换为非持久模式，之后开机的所有更改在关机后丢弃。"
+        : "其全部硬盘将恢复为持久模式。"))) {
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await apiPost({ op: "set_template", moid: vm.moid, enabled: enable });
+      toast(enable ? "已设为模板" : "已取消模板");
+      await loadInventory();
+    } catch (ex) { toast(ex.message, true); btn.disabled = false; }
+  }
+});
+
+// ---------------- 编辑 ----------------
+function openEdit(vm) {
+  editVm = vm;
+  pendingAddDisks.length = 0; pendingAddNics.length = 0;
+  $("e-title").textContent = vm.name;
+  const running = vm.state !== "poweredOff";
+  $("e-powerwarn").textContent = running
+    ? "虚拟机正在运行：仅支持 CPU/内存热添加（需已开启且只能增大）、硬盘扩容（持久盘且无快照）、网卡变更与加盘；其余操作请先关机。"
+    : "";
+  $("e-hothint").textContent =
+    `CPU 热添加：${vm.cpu_hotadd ? "已开启" : "未开启"}　内存热添加：${vm.mem_hotadd ? "已开启" : "未开启"}`
+    + (vm.has_snapshots ? "　⚠ 有快照，在线扩容不可用" : "");
+  cpuOptions($("e-cpu"), vm.cpu);
+  $("e-mem").value = vm.mem_mb;
+  $("e-disks").innerHTML = vm.disks.map((d) => `
+    <div class="row" data-dkey="${d.key}">
+      <div class="grow">${esc(d.label)}
+        <span class="muted">（${d.mode === "independent_nonpersistent" ? "非持久" : "持久"}${d.thin ? "·精简" : ""}）</span></div>
+      <label class="resize">扩容到 <input type="number" style="width:90px" class="resize-gb"
+        data-orig="${d.capacity_gb}" value="${d.capacity_gb}" min="${d.capacity_gb}" step="1" /> GB</label>
+      <label><input type="checkbox" class="rm-disk" /> 移除</label>
+      <label><input type="checkbox" class="rm-file" /> 连同文件删除</label>
+    </div>`).join("") || '<div class="row muted">无硬盘</div>';
+  $("e-nics").innerHTML = vm.nics.map((n) => `
+    <div class="row" data-nkey="${n.key}">
+      <div class="grow">${esc(n.label)} <span class="muted">${esc(n.adapter)} ${esc(n.mac || "")}</span></div>
+      <select class="edit-pg" data-orig="${esc(n.network)}">
+        ${INV.portgroups.map((p) =>
+          `<option ${p.name === n.network ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+      </select>
+      <label><input type="checkbox" class="rm-nic" /> 移除</label>
+    </div>`).join("") || '<div class="row muted">无网卡</div>';
+  $("e-addlist").textContent = ""; $("e-addniclist").textContent = "";
+  openModal("modal-edit");
+}
+$("e-adddisk").addEventListener("click", () => {
+  const size = parseFloat($("e-addsize").value);
+  const ds = $("e-addds").value;
+  if (!size || !ds) { toast("填写容量并选择存储", true); return; }
+  pendingAddDisks.push({
+    size_gb: size, provisioning: $("e-addprov").value, datastore: ds,
+  });
+  $("e-addlist").textContent = "待加：" + pendingAddDisks
+    .map((d) => `${d.size_gb}GB/${d.datastore}`).join("、");
+});
+$("e-addnic").addEventListener("click", () => {
+  pendingAddNics.push({
+    network: $("e-addpg").value, adapter: $("e-addnictype").value,
+  });
+  $("e-addniclist").textContent = "待加：" + pendingAddNics
+    .map((n) => n.network).join("、");
+});
+$("e-cancel").addEventListener("click", closeModals);
+$("e-submit").addEventListener("click", async () => {
+  const vm = editVm;
+  const changes = {};
+  const cpu = parseInt($("e-cpu").value, 10);
+  const mem = parseInt($("e-mem").value, 10);
+  if (cpu && cpu !== vm.cpu) { changes.cpu = cpu; }
+  if (mem && mem !== vm.mem_mb) { changes.memory_mb = mem; }
+
+  const resize = [], removeDisks = [];
+  document.querySelectorAll("#e-disks .row[data-dkey]").forEach((row) => {
+    const key = parseInt(row.dataset.dkey, 10);
+    const orig = vm.disks.find((d) => d.key === key);
+    const gb = parseFloat(row.querySelector(".resize-gb").value);
+    if (gb > orig.capacity_gb + 0.01) {
+      resize.push({ key, size_gb: gb });
+    }
+    if (gb < orig.capacity_gb - 0.01) {
+      throwErr("硬盘不能缩小：" + orig.label);
+    }
+    if (row.querySelector(".rm-disk").checked) {
+      removeDisks.push({
+        key, delete_file: row.querySelector(".rm-file").checked,
+      });
+    }
+  });
+  if (resize.length) { changes.resize_disks = resize; }
+  if (removeDisks.length) { changes.remove_disks = removeDisks; }
+  if (pendingAddDisks.length) { changes.add_disks = pendingAddDisks.slice(); }
+
+  const editNics = [], removeNics = [];
+  document.querySelectorAll("#e-nics .row[data-nkey]").forEach((row) => {
+    const key = parseInt(row.dataset.nkey, 10);
+    const sel = row.querySelector(".edit-pg");
+    if (row.querySelector(".rm-nic").checked) {
+      removeNics.push({ key });
+    } else if (sel.value !== sel.dataset.orig) {
+      editNics.push({ key, network: sel.value });
+    }
+  });
+  if (editNics.length) { changes.edit_nics = editNics; }
+  if (removeNics.length) { changes.remove_nics = removeNics; }
+  if (pendingAddNics.length) { changes.add_nics = pendingAddNics.slice(); }
+
+  if (!Object.keys(changes).length) { toast("没有需要保存的修改"); return; }
+  $("e-submit").disabled = true;
+  try {
+    await apiPost({ op: "reconfigure", moid: vm.moid, changes });
+    closeModals(); toast("硬件已更新"); await loadInventory();
+  } catch (ex) { toast(ex.message, true); }
+  finally { $("e-submit").disabled = false; }
+  function throwErr(m) { throw new Error(m); }
+});
+
+// ---------------- 删除 ----------------
+let deleteVm = null;
+function vmExternalDisks(vm) {
+  return vm.disks.filter((d) => {
+    if (!d.ds || !d.path) { return false; }
+    const dir = d.path.includes("/") ? d.path.slice(0, d.path.lastIndexOf("/")) : "";
+    return d.ds !== vm.vmx_ds
+      || (dir !== vm.vmx_dir_full && !dir.startsWith(vm.vmx_dir_full + "/"));
+  });
+}
+function openDelete(vm) {
+  deleteVm = vm;
+  $("d-title").textContent = vm.name;
+  $("d-name-confirm").value = ""; $("d-confirm").checked = false;
+  $("d-submit").disabled = true;
+  const external = vmExternalDisks(vm);
+  const hasNp = vm.disks.some((d) =>
+    d.mode === "independent_nonpersistent");
+  const safePath = hasNp || external.length;
+  let reason = "";
+  if (vm.state !== "poweredOff") {
+    reason = "虚拟机正在运行或挂起，不能删除。请先彻底关机。";
+  }
+  $("d-reason").textContent = reason;
+  $("d-submit").disabled = vm.state !== "poweredOff";
+  let plan;
+  if (safePath) {
+    plan = "删除方式：<b>取消注册并删除该虚拟机自己的目录</b>"
+      + `<br>将删除目录 <b>${esc("[" + vm.vmx_ds + "] " + vm.vmx_dir)}</b> 中属于本机的文件。`;
+    if (external.length) {
+      plan += '<br><br>以下共享磁盘位于其他目录，<b>不会被删除</b>：<br>'
+        + external.map((d) => "· " + esc(d.file)).join("<br>");
+    } else {
+      plan += '<br><br>非持久母盘文件不在本目录内，不会被删除。';
+    }
+  } else {
+    plan = "删除方式：<b>从磁盘彻底移除</b><br>虚拟机配置及其全部虚拟磁盘文件都将被删除。";
+  }
+  $("d-plan").innerHTML = plan;
+  openModal("modal-delete");
+}
+["d-confirm", "d-name-confirm"].forEach((id) =>
+  $(id).addEventListener("input", () => {
+    $("d-submit").disabled =
+      !$("d-confirm").checked || $("d-name-confirm").value !== deleteVm.name
+      || deleteVm.state !== "poweredOff";
+  }));
+$("d-cancel").addEventListener("click", closeModals);
+$("d-submit").addEventListener("click", async () => {
+  $("d-submit").disabled = true;
+  try {
+    const res = await apiPost({ op: "delete", moid: deleteVm.moid });
+    closeModals();
+    toast(`已删除（${res.method === "destroy" ? "从磁盘移除" : "取消注册并清理目录"}）`);
+    await loadInventory();
+  } catch (ex) { toast(ex.message, true); $("d-submit").disabled = false; }
+});
+
+// ---------------- 任务进度 ----------------
+function startJobPolling(jobId) {
+  sessionStorage.setItem("esxi_admin_job", jobId);
+  $("jobbar").classList.add("show");
+  pollJob();
+}
+async function pollJob() {
+  clearTimeout(jobTimer);
+  const jobId = sessionStorage.getItem("esxi_admin_job");
+  if (!jobId) { return; }
+  let job;
+  try {
+    job = await apiPost({ op: "job_status", job_id: jobId });
+  } catch (e) {
+    jobTimer = setTimeout(pollJob, 4000);
+    return;
+  }
+  if (!job || !job.found) {
+    sessionStorage.removeItem("esxi_admin_job");
+    $("jobbar").classList.remove("show");
+    return;
+  }
+  const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
+  $("job-bar").style.width = pct + "%";
+  $("job-count").textContent = `${job.done}/${job.total}　失败 ${job.failed.length}`
+    + (job.state === "running" ? "　进行中…" : job.state === "canceled" ? "　已取消" : "　完成");
+  $("job-cancel").style.display = job.state === "running" ? "" : "none";
+  $("job-items").innerHTML = job.items.map((it) =>
+    `<div class="${it.state === "failed" ? "err" : ""}">`
+    + `${it.state === "ok" ? "✓" : it.state === "failed" ? "✕" : "…"} ${esc(it.name)}`
+    + (it.error ? " — " + esc(it.error) : "") + "</div>").join("");
+  if (job.state === "running") {
+    jobTimer = setTimeout(pollJob, 1500);
+  } else {
+    sessionStorage.removeItem("esxi_admin_job");
+    loadInventory();
+  }
+}
+$("job-cancel").addEventListener("click", async () => {
+  const jobId = sessionStorage.getItem("esxi_admin_job");
+  try { await apiPost({ op: "cancel_job", job_id: jobId }); }
+  catch (e) { toast(e.message, true); }
+});
+$("job-close").addEventListener("click", () => {
+  $("jobbar").classList.remove("show");
+});
+$("btn-refresh").addEventListener("click", loadInventory);
+$("filter").addEventListener("input", renderRows);
+// 移动端主机信息被截断时，点击可展开/收起
+$("hostinfo").addEventListener("click", () => {
+  const el = $("hostinfo");
+  if (el.classList.contains("expand") || el.scrollWidth > el.clientWidth + 2) {
+    el.classList.toggle("expand");
+  }
+});
+
+loadInventory();
+const resumeJob = sessionStorage.getItem("esxi_admin_job");
+if (resumeJob) { startJobPolling(resumeJob); }
+setInterval(() => { if (!document.hidden) { loadInventory(); } }, 15000);
+</script>
+</body>
+</html>

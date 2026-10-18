@@ -1,0 +1,166 @@
+{
+    "title": "ESXi 统计",
+    "config": {
+        "step": {
+            "user": {
+                "title": "ESXi 统计",
+                "description": "如果您需要配置帮助，请看这里：https://github.com/chjspp520/esxi_control/blob/master/README.md",
+                "data": {
+                    "host": "IP地址或者主机名 (FQDN)",
+                    "port": "端口",
+                    "username": "用户名",
+                    "password": "密码",
+                    "verify_ssl": "验证SSL",
+                    "vmhost": "获取有关主机的信息",
+                    "datastore": "获取有关数据存储的信息",
+                    "license": "获取有关许可证的信息",
+                    "vm": "获取有关虚拟机的信息"
+                }
+            }
+        },
+        "error": {
+            "communication": "无法使用此配置访问ESXi，请检查输入值."
+        },
+        "abort": {
+            "single_instance_allowed": "仅允许进行ESXi统计信息的单个配置.",
+            "already_configured": "该主机或vCenter已配置."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "general": "通用设置",
+                    "guest_creds": "来宾凭据（每台虚拟机的客户机账号密码）"
+                },
+                "description": "选择要配置的项目。「来宾凭据」用于 Guest Operations：经 VMware Tools 在客户机操作系统里执行程序、传文件、查注册表等。"
+            },
+            "general": {
+                "data": {
+                    "console_base_url": "控制台访问地址（端口映射/反代时填浏览器实际地址，如 http://192.168.1.10:18123；留空自动）",
+                    "datastore": "数据存储状态属性",
+                    "license": "许可证状态属性",
+                    "notify": "创建服务调用通知",
+                    "screenshot_interval": "截图间隔（秒）",
+                    "short_entity_ids": "把实体重命名为简短固定的 entity_id（如 switch.ha_power）",
+                    "aggregate_interval": "实体聚合刷新间隔（秒）",
+                    "update_interval": "数据刷新间隔（秒）——向 ESXi 拉数据的频率，调小更实时、更耗 ESXi"
+                },
+                "description": "配置数据存储/许可证传感器的状态属性、虚拟机截图间隔、短 entity_id、「实体聚合」快照刷新间隔，以及向 ESXi 拉数据的「数据刷新间隔」。"
+            },
+            "guest_creds": {
+                "data": {
+                    "vm": "虚拟机"
+                },
+                "description": "{hint}"
+            },
+            "guest_edit": {
+                "data": {
+                    "username": "来宾用户名",
+                    "password": "来宾密码（留空 = 保持已保存的密码不变）",
+                    "domain": "域（可选，Windows 域账号才需要）",
+                    "remove": "删除这台虚拟机的来宾凭据"
+                },
+                "description": "正在配置虚拟机：{vm}\n{hint}"
+            }
+        },
+        "error": {
+            "invalid_cred": "{hint}",
+            "invalid_console_base": "控制台访问地址无效：请填写以 http:// 或 https:// 开头、包含主机和端口（如需）的完整地址，例如 http://192.168.1.10:18123；留空则自动跟随浏览器实际访问地址"
+        }
+    },
+    "entity": {
+        "sensor": {
+            "vm": {
+                "cpu_count": "CPU数量",
+                "cpu_use_pct": "CPU使用率",
+                "cpuusage_ghz": "CPU使用量",
+                "memory_allocated_mb": "分配内存",
+                "memory_used_mb": "已用内存",
+                "memory_active_mb": "活跃内存",
+                "used_space_gb": "已用空间",
+                "uptime_hours": "运行时间",
+                "snapshots": "快照数量",
+                "tools_status": "Tools状态",
+                "guest_os": "客户机操作系统",
+                "guest_ip": "IP地址",
+                "status": "状态",
+                "state": "电源状态",
+                "host_name": "所属主机"
+            },
+            "host": {
+                "cpu_usage": "CPU使用率",
+                "memory_usage": "内存使用率",
+                "uptime": "运行时间",
+                "virtual_machines": "虚拟机数量",
+                "connection_state": "连接状态",
+                "overall_status": "整体状态",
+                "power_state": "电源状态"
+            },
+            "datastore": {
+                "free_space_gb": "可用空间",
+                "total_space_gb": "总空间",
+                "used_space_gb": "已用空间",
+                "usage_percent": "使用百分比",
+                "status": "状态"
+            },
+            "license": {
+                "license_key": "许可证密钥",
+                "license_name": "许可证名称",
+                "product_name": "产品名称",
+                "expiration_days": "剩余天数",
+                "status": "状态"
+            }
+        },
+        "button": {
+            "vm_reboot": "重启虚拟机",
+            "vm_shutdown": "关闭虚拟机",
+            "vm_poweron": "启动虚拟机",
+            "vm_suspend": "暂停虚拟机",
+            "vm_reset": "重置虚拟机",
+            "host_reboot": "重启主机",
+            "host_shutdown": "关闭主机"
+        },
+        "switch": {
+            "vm_power": "虚拟机电源",
+            "host_maintenance": "主机维护模式"
+        },
+        "select": {
+            "host_power_policy": "主机电源策略"
+        }
+    },
+    "service": {
+        "vm_reboot": {
+            "name": "重启虚拟机",
+            "description": "重启指定的虚拟机"
+        },
+        "vm_shutdown": {
+            "name": "关闭虚拟机",
+            "description": "关闭指定的虚拟机"
+        },
+        "vm_poweron": {
+            "name": "启动虚拟机",
+            "description": "启动指定的虚拟机"
+        },
+        "vm_suspend": {
+            "name": "暂停虚拟机",
+            "description": "暂停指定的虚拟机"
+        },
+        "vm_reset": {
+            "name": "重置虚拟机",
+            "description": "重置指定的虚拟机"
+        },
+        "host_reboot": {
+            "name": "重启主机",
+            "description": "重启指定的主机"
+        },
+        "host_shutdown": {
+            "name": "关闭主机",
+            "description": "关闭指定的主机"
+        },
+        "datastore_refresh": {
+            "name": "刷新数据存储",
+            "description": "刷新数据存储信息"
+        }
+    }
+}

@@ -1,0 +1,173 @@
+{
+    "title": "ESXi Control",
+    "config": {
+        "step": {
+            "user": {
+                "title": "ESXi Control",
+                "description": "If you need help with the configuration have a look here: https://github.com/chjspp520/esxi_control/blob/master/README.md",
+                "data": {
+                    "host": "IP Address or host name (FQDN)",
+                    "port": "Port",
+                    "username": "Username",
+                    "password": "Password",
+                    "verify_ssl": "Verify SSL",
+                    "vmhost": "Get information about the hosts",
+                    "datastore": "Get information about the datastores",
+                    "license": "Get information about licenses",
+                    "vm": "Get information about the VMs",
+                    "notify": "Create service call notifications"
+                }
+            }
+        },
+        "error": {
+            "communication": "Could not access ESXi with this configuration, check the values."
+        },
+        "abort": {
+            "single_instance_allowed": "Only a single configuration of ESXi Control is allowed.",
+            "already_configured": "This host/vCenter is already configured."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "general": "General settings",
+                    "guest_creds": "Guest credentials (per-VM guest OS account)"
+                },
+                "description": "Choose what to configure. Guest credentials power Guest Operations: run programs, transfer files and query the registry inside the guest OS through VMware Tools."
+            },
+            "general": {
+                "data": {
+                    "console_base_url": "Console access URL (fill when using port mapping/reverse proxy, e.g. http://192.168.1.10:18123; blank = auto)",
+                    "datastore": "Datastore State Attribute",
+                    "license": "License State Attribute",
+                    "notify": "Create service call notifications",
+                    "screenshot_interval": "Screenshot interval (seconds)",
+                    "short_entity_ids": "Rename entities to short fixed entity_ids (e.g. switch.ha_power)",
+                    "aggregate_interval": "Entity aggregate refresh interval (seconds)",
+                    "update_interval": "Data refresh interval (seconds) - how often data is pulled from ESXi"
+                },
+                "description": "Configure state attributes for datastore/license sensors, the VM screenshot interval, short entity_ids, the entity-aggregate snapshot refresh interval, and the data refresh interval for pulling from ESXi."
+            },
+            "guest_creds": {
+                "data": {
+                    "vm": "Virtual machine"
+                },
+                "description": "{hint}"
+            },
+            "guest_edit": {
+                "data": {
+                    "username": "Guest username",
+                    "password": "Guest password (leave blank to keep the stored password)",
+                    "domain": "Domain (optional, Windows domain accounts only)",
+                    "remove": "Remove the guest credentials for this VM"
+                },
+                "description": "Configuring virtual machine: {vm}\n{hint}"
+            }
+        },
+        "error": {
+            "invalid_cred": "{hint}",
+            "invalid_console_base": "Invalid console access URL: must start with http:// or https:// and include a host, e.g. http://192.168.1.10:18123; leave blank to auto-detect"
+        }
+    },
+    "services": {
+        "host_power": {
+            "name": "host_power",
+            "description": "Sends power commands to vCenter/ESXi Host",
+            "fields": {
+                "host": {
+                    "name": "host",
+                    "description": "Host/vCenter target"
+                },
+                "command": {
+                    "name": "command",
+                    "description": "Power command to run against ESXi host"
+                },
+                "force": {
+                    "name": "force",
+                    "description": "Flag to specify whether or not the host should be shut down/rebooted regardless of whether it is in maintenance mode. If true, the host is shut down/rebooted, even if there are virtual machines running or other operations in progress."
+                }
+            }
+        },
+        "host_power_policy": {
+            "name": "host_power_policy",
+            "description": "Changes ESXi Host Power Policy",
+            "fields": {
+                "host": {
+                    "name": "host",
+                    "description": "Host on which to change Power Policy"
+                },
+                "command": {
+                    "name": "command",
+                    "description": "Type of power policy to apply"
+                }
+            }
+        },
+        "vm_power": {
+            "name": "vm_power",
+            "description": "Sends Virtual Machine power commands to vCenter/ESXi Host",
+            "fields": {
+                "host": {
+                    "name": "host",
+                    "description": "Host/vCenter where a Virtual Machine resides"
+                },
+                "command": {
+                    "name": "command",
+                    "description": "Power command to run against Virtual Machine"
+                },
+                "vm": {
+                    "name": "vm",
+                    "description": "Name of the Virtual Machine"
+                }
+            }
+        },
+        "create_snapshot": {
+            "name": "create_snapshot",
+            "description": "Sends a command to vCenter/ESXi Host to take a Virtual Machine snapshot. For detailed information about snapshots see https://kb.vmware.com/s/article/1015180",
+            "fields": {
+                "host": {
+                    "name": "host",
+                    "description": "Host/vCenter where a Virtual Machine resides"
+                },
+                "vm": {
+                    "name": "vm",
+                    "description": "Name of the Virtual Machine"
+                },
+                "name": {
+                    "name": "name",
+                    "description": "Name of the snapshot"
+                },
+                "description": {
+                    "name": "description",
+                    "description": "(OPTIONAL) A description for this snapshot"
+                },
+                "memory": {
+                    "name": "memory",
+                    "description": "(OPTIONAL) Take snapshot with memory dump"
+                },
+                "quiesce": {
+                    "name": "quiesce",
+                    "description": "(OPTIONAL) Quiesce VM's file system. Only used if VM is running and VM Tools are installed."
+                }
+            }
+        },
+        "remove_snapshot": {
+            "name": "remove_snapshot",
+            "description": "Sends a command to vCenter/ESXi Host to remove a Virtual Machine snapshot",
+            "fields": {
+                "host": {
+                    "name": "host",
+                    "description": "Host/vCenter where a Virtual Machine resides"
+                },
+                "command": {
+                    "name": "command",
+                    "description": "Which snapshot to remove"
+                },
+                "vm": {
+                    "name": "vm",
+                    "description": "Name of the Virtual Machine"
+                }
+            }
+        }
+    }
+}

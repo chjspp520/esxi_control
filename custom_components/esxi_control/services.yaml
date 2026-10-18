@@ -1,0 +1,428 @@
+---
+host_power:
+  name: ESXi 主机电源
+  description: 向 vCenter/ESXi 主机发送电源命令
+  fields:
+    host:
+      description: 主机/vCenter 目标
+      example: 192.168.1.1
+    target_host:
+      description: |
+        (可选) 当使用管理多主机的 vCenter 时，要定位的特定 ESXi 主机名称。
+        如果未指定且只有一个主机可用，则使用该主机。
+        当 vCenter 管理多个主机时是必需的。
+      example: 'esxi01.example.com'
+    command:
+      description: 要在 ESXi 主机上运行的电源命令
+      example: 'reboot|shutdown'
+    force:
+      description: |
+        指定主机是否应在不管是否处于维护模式的情况下关闭/重启的标志。
+        如果为 true，即使有虚拟机在运行或其他操作正在进行，主机也会被关闭/重启。
+      example: 'true|false'
+
+list_hosts:
+  name: 列出 ESXi 主机
+  description: 列出 vCenter 中可用的所有 ESXi 主机（对于发现 target_host 名称很有用）
+  fields:
+    host:
+      description: 主机/vCenter 目标
+      example: 192.168.1.1
+
+list_power_policies:
+  name: 列出电源策略
+  description: 列出特定 ESXi 主机的所有可用电源策略
+  fields:
+    host:
+      description: 要连接的主机/vCenter 目标
+      example: 192.168.1.1
+    target_host:
+      description: >
+        (对于单个 ESXi 可选，对于 vCenter 必需) 要检查策略的特定 ESXi 主机名称。
+        使用 'list_hosts' 服务发现 vCenter 中的可用主机名称。
+      example: 'esxi01.domain.com'
+
+host_power_policy:
+  name: 主机电源策略
+  description: 更改 ESXi 主机电源策略（支持 ESXi 和 vCenter）
+  fields:
+    host:
+      description: 要连接的主机/vCenter 目标
+      example: 192.168.1.1
+    command:
+      description: 要应用的电源策略类型
+      example: 'static|dynamic|low'
+    target_host:
+      description: >
+        (对于单个 ESXi 可选，对于 vCenter 必需) 要配置的特定 ESXi 主机名称。
+        使用 'list_hosts' 服务发现 vCenter 中的可用主机名称。
+      example: 'esxi01.domain.com'
+
+vm_power:
+  name: 虚拟机电源
+  description: 向 vCenter/ESXi 主机发送虚拟机电源命令
+  fields:
+    host:
+      description: 虚拟机所在的主机/vCenter
+      example: 192.168.1.1
+    vm:
+      description: 虚拟机的名称
+      example: 'vm_name'
+    command:
+      description: 要在虚拟机上运行的电源命令
+      example: 'on|off|reboot|reset|shutdown|suspend'
+
+create_snapshot:
+  name: 创建虚拟机快照
+  description: |
+    向 vCenter/ESXi 主机发送命令以创建虚拟机快照。
+    有关快照的详细信息，请参阅 https://kb.vmware.com/s/article/1015180
+  fields:
+    host:
+      description: 虚拟机所在的主机/vCenter
+      example: 192.168.1.1
+    vm:
+      description: 虚拟机的名称
+      example: 'vm_name'
+    name:
+      description: 快照的名称
+      example: 'before hass update'
+    description:
+      description: (可选) 此快照的描述
+      example: 'snapshot before big breaking change'
+    memory:
+      description: (可选) 拍摄带有内存转储的快照
+      example: 'true|false (default: false)'
+    quiesce:
+      description: |
+        (可选) 静默虚拟机的文件系统。
+        仅在虚拟机运行且安装了 VM Tools 时使用。
+      example: 'true|false (default: false)'
+
+remove_snapshot:
+  name: 删除虚拟机快照
+  description: |
+    向 vCenter/ESXi 主机发送命令以删除虚拟机快照
+  fields:
+    host:
+      description: 虚拟机所在的主机/vCenter
+      example: 192.168.1.1
+    vm:
+      description: 虚拟机的名称
+      example: 'vm_name'
+    command:
+      description: 要删除哪个快照
+      example: 'all|first|last'
+
+sync:
+  name: 同步实体
+  description: |
+    重新扫描 ESXi 上的主机 / 虚拟机 / 数据存储 / 许可证，把 HA 的实体清单对齐到真实状态：
+    为新增对象创建实体、把已消失对象的实体从注册表移除。
+    用于在 ESXi 里新增 / 删除 / 改名虚拟机之后，无需重载整个集成。
+    安全约束：仅当本次数据刷新成功时才执行删除（ESXi 不可达时只新增、绝不删）。
+  fields:
+    entry_id:
+      description: 只同步指定的配置条目（可选，不填 = 同步全部 ESXi Control 条目）
+      example: '3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d'
+
+refresh:
+  name: 立即刷新数据
+  description: |
+    立刻向 ESXi 拉取一次最新数据，并让相关实体马上去更新状态。
+    集成默认每 45 秒才真正拉一次数据（节流），所以卡片上的 CPU 占用率、内存等
+    实时值也是约 45 秒才变一次。想在需要时立刻看到实时值，就调用这个服务。
+    只读操作：不创建、不删除、不修改任何实体（与 sync 的分工就在这里）。
+  fields:
+    entry_id:
+      description: 只刷新指定的配置条目（可选，不填 = 刷新全部 ESXi Control 条目）
+      example: '3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d'
+
+# --------------------------------------------------------------------------- #
+# 来宾操作（Guest Operations）—— 需要先在「集成 → 配置 → 来宾凭据」里
+# 为每台虚拟机配置客户机操作系统（Windows/Linux）的用户名和密码。
+# 前提：虚拟机已开机且 VMware Tools 正在运行。服务均返回结构化结果（可在脚本中接收）。
+# --------------------------------------------------------------------------- #
+guest_validate:
+  name: 验证来宾凭据
+  description: 强制校验为该虚拟机保存的来宾用户名/密码是否有效（结果同时反映到该 VM 的「来宾凭据」二进传感器）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+
+guest_list_processes:
+  name: 来宾-列出进程
+  description: 列出客户机操作系统内正在运行的进程（PID、命令行、属主、启动时间、退出码）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    pids:
+      description: （可选）只查询这些 PID；不填 = 列出全部
+      example: '[1234, 5678]'
+
+guest_start_program:
+  name: 来宾-启动程序
+  description: 在客户机操作系统内启动一个程序，返回新进程的 PID。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    program_path:
+      description: 来宾内程序的完整路径
+      example: 'C:\Windows\System32\cmd.exe'
+    arguments:
+      description: （可选）命令行参数
+      example: '/c whoami > C:\out.txt'
+    working_directory:
+      description: （可选）工作目录
+      example: 'C:\Users\Administrator'
+    env_variables:
+      description: '（可选）环境变量列表，每项形如 KEY=VALUE'
+      example: '["FOO=bar"]'
+
+guest_terminate_process:
+  name: 来宾-结束进程
+  description: 按 PID 结束客户机操作系统内的进程。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    pid:
+      description: 要结束的进程 PID
+      example: 1234
+
+guest_list_files:
+  name: 来宾-列出文件
+  description: 列出客户机操作系统内某个目录的内容（自动翻页，最多 1000 条）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    path:
+      description: 来宾内目录路径（默认根目录 /，Windows 可填 C:\）
+      example: '/home/user'
+    max_results:
+      description: 最多返回条数（1-1000，默认 200）
+      example: 200
+
+guest_make_directory:
+  name: 来宾-创建目录
+  description: 在客户机操作系统内创建目录。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    path:
+      description: 要创建的目录路径
+      example: '/opt/app/logs'
+    create_parents:
+      description: 是否自动创建不存在的父目录（默认 true）
+      example: 'true'
+
+guest_remove_path:
+  name: 来宾-删除文件或目录
+  description: 删除客户机操作系统内的文件或目录（先按文件删，失败再按目录删，目录默认递归）。危险操作，请确认路径。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    path:
+      description: 要删除的文件或目录路径
+      example: '/tmp/old_data'
+    recursive:
+      description: 删除目录时是否递归（默认 true）
+      example: 'true'
+
+guest_upload_file:
+  name: 来宾-上传文件
+  description: 把运行 Home Assistant 的主机上的文件，经 VMware Tools 上传到客户机操作系统内。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    local_path:
+      description: HA 本机上的源文件绝对路径（HA 容器需可访问，如 /config/...）
+      example: '/config/www/agent.zip'
+    guest_path:
+      description: 来宾内的目标文件完整路径
+      example: 'C:\Temp\agent.zip'
+    overwrite:
+      description: 目标已存在时是否覆盖（默认 true）
+      example: 'true'
+
+guest_download_file:
+  name: 来宾-下载文件
+  description: 经 VMware Tools 把客户机操作系统内的文件下载到运行 Home Assistant 的主机上。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    guest_path:
+      description: 来宾内的源文件路径
+      example: 'C:\Users\Administrator\Desktop\report.csv'
+    local_path:
+      description: HA 本机上的目标文件绝对路径
+      example: '/config/downloads/report.csv'
+
+guest_list_aliases:
+  name: 来宾-列出别名
+  description: 列出客户机用户的 Guest 别名（aliasManager，证书/VIX 账号映射，只读查看）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1001'
+    guest_username:
+      description: （可选）要查询的来宾用户名，不填 = 使用已保存凭据的用户
+      example: 'Administrator'
+
+guest_list_registry:
+  name: 来宾-查询注册表
+  description: 查询 Windows 来宾注册表某键下的子键和值（仅 Windows 客户机，只读）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: 'win10'
+    key_path:
+      description: 完整注册表键路径
+      example: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion'
+    recursive:
+      description: 是否递归列出子键（默认 false）
+      example: 'false'
+
+# --------------------------------------------------------------------------- #
+# 硬件 / 自启动 / 光盘
+# --------------------------------------------------------------------------- #
+vm_set_nic:
+  name: 虚拟机网卡连接/断开
+  description: |
+    热连接或断开虚拟机的某块网卡（NIC），虚拟机开机、关机状态下都可以操作，
+    相当于 vSphere 里「编辑设置 → 网络适配器 → 已连接」复选框。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1002'
+    mac:
+      description: 要操作的网卡 MAC 地址（大小写、冒号/横杠均可，按虚拟机硬件里的地址填写）
+      example: '00:0c:29:aa:bb:cc'
+    connected:
+      description: true = 连接网卡，false = 断开网卡
+      example: 'true'
+
+vm_consolidate:
+  name: 合并虚拟机快照磁盘
+  description: |
+    当虚拟机出现「需要合并磁盘（Configuration issue / 磁盘需要整合）」时，
+    执行 ConsolidateVMDisks_Task 把遗留的重做磁盘合并回基础盘。
+    合并期间磁盘 IO 较高，请避开业务高峰。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1002'
+
+vm_set_autostart:
+  name: 设置虚拟机随主机自启
+  description: |
+    把虚拟机加入（enabled=true）或移出（false）ESXi 主机的自动启动/停止序列。
+    注意主机「虚拟机自启动总开关」（host_set_autostart）关闭时，即使在序列里也不会启动。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1002'
+    enabled:
+      description: true = 加入自启动序列，false = 移出
+      example: 'true'
+
+host_set_autostart:
+  name: 设置主机自启动总开关
+  description: 打开或关闭 ESXi 主机「随主机启动和停止虚拟机」总开关（保留已有启停顺序与延时）。
+  fields:
+    host:
+      description: 要连接的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    enabled:
+      description: true = 启用，false = 关闭
+      example: 'true'
+    target_host:
+      description: （可选）vCenter 多主机时指定具体 ESXi 主机名称；单机不用填
+      example: 'esxi01.example.com'
+
+vm_mount_iso:
+  name: 上传并挂载 ISO 光盘
+  description: |
+    把 Home Assistant 主机可访问的本地 ISO 上传到 ESXi 数据存储并挂载为虚拟机的第一个光驱
+    （没有光驱会热添加一个）。控制台页面的「光盘」面板走同一套链路并支持自动打包，
+    本服务用于自动化场景直接挂载现成 ISO。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1002'
+    local_path:
+      description: HA 本机/容器内可读取的 ISO 绝对路径
+      example: '/config/www/vmtools.iso'
+    datastore_dir:
+      description: （可选）数据存储根下的目标目录，默认 ha_iso_uploads（不存在会自动创建）
+      example: 'ha_iso_uploads'
+
+vm_eject_iso:
+  name: 弹出虚拟机光盘
+  description: |
+    弹出虚拟机当前挂载的 ISO（光驱退回「客户端设备」并断开连接），
+    与 vSphere Client 的「弹出」效果一致。delete_file=true 时同时从数据存储删除该 ISO 文件
+    （请确认 ISO 没有被其他虚拟机使用）。
+  fields:
+    host:
+      description: 虚拟机所在的 ESXi 主机/vCenter
+      example: 192.168.1.197
+    vm:
+      description: 虚拟机名称
+      example: '1002'
+    delete_file:
+      description: （可选，默认 false）弹出后是否删除数据存储上的 ISO 文件
+      example: 'true'

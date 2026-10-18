@@ -1,0 +1,2064 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>文件系统 · __VM_NAME__</title>
+<style>
+  :root {
+    --bg: #11151c;
+    --panel: #202a38;
+    --panel2: #2a3646;
+    --line: #33425a;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, input, select { font: inherit; }
+  button {
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { background: #34425a; border-color: #46587a; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  button.danger { color: #ffd7d4; border-color: rgba(248,81,73,.5); }
+  button.danger:hover { background: rgba(248,81,73,.18); }
+  button.sm { padding: 2px 8px; font-size: 12.5px; border-radius: 6px; }
+  input[type=text], input[type=search] {
+    background: #0d1117; color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    padding-top: calc(10px + env(safe-area-inset-top));
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .vm { color: var(--accent); }
+  .spacer { flex: 1; }
+  #cred-badge {
+    font-size: 12.5px; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  #cred-badge.ok { color: var(--ok); border-color: rgba(63,185,80,.5); background: rgba(63,185,80,.1); }
+  #cred-badge.bad { color: var(--danger); border-color: rgba(248,81,73,.5); background: rgba(248,81,73,.1); }
+
+  /* ---------- 标签页 ---------- */
+  nav.tabs { display: flex; gap: 4px; padding: 8px 14px 0; flex: 0 0 auto; }
+  nav.tabs button {
+    border-radius: 8px 8px 0 0; border-bottom: none; background: transparent;
+    color: var(--muted); padding: 8px 18px;
+  }
+  nav.tabs button.active { background: var(--panel); color: var(--text); font-weight: 600; }
+  main { flex: 1 1 auto; overflow: hidden; padding: 0 14px 14px; }
+  .tab-page {
+    display: none; flex-direction: column; height: 100%;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 0 10px 10px 10px;
+    overflow: hidden;
+  }
+  .tab-page.active { display: flex; }
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; border-bottom: 1px solid var(--line); flex: 0 0 auto;
+  }
+  .toolbar label { color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .table-wrap { flex: 1 1 auto; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left; padding: 6px 10px; white-space: nowrap;
+    border-bottom: 1px solid rgba(51,66,90,.5);
+  }
+  th {
+    position: sticky; top: 0; background: var(--panel2); z-index: 1;
+    color: var(--muted); font-weight: 600; cursor: default;
+  }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); }
+  tbody tr { cursor: default; }
+  tbody tr:hover { background: rgba(88,166,255,.07); }
+  td.wrap, th.wrap { white-space: normal; word-break: break-all; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  tr.exited td { color: var(--muted); }
+  tr.dir td.name { color: var(--accent); font-weight: 600; }
+  tr.dir { cursor: pointer; }
+
+  .statusbar {
+    flex: 0 0 auto; padding: 6px 12px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 12.5px; min-height: 29px;
+  }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  /* ---------- 表单 / 弹层 ---------- */
+  .pop {
+    display: none; position: fixed; inset: 0; z-index: 20;
+    background: rgba(0,0,0,.55); align-items: center; justify-content: center; padding: 20px;
+  }
+  .pop.open { display: flex; }
+  .pop .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    width: min(560px, 96vw); max-height: 92vh; overflow: auto; padding: 18px 20px;
+  }
+  .pop h2 { margin: 0 0 14px; font-size: 16px; }
+  .form-row { margin-bottom: 12px; }
+  .form-row label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12.5px; }
+  .form-row input, .form-row textarea { width: 100%; }
+  .form-row textarea {
+    background: #0d1117; color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 10px; min-height: 70px; resize: vertical;
+  }
+  .pop .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  .progress { height: 6px; background: #0d1117; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ---------- 杂项 ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
+    transform: translate(-50%, 20px); z-index: 40;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 18px; border-radius: 9px; opacity: 0; pointer-events: none;
+    transition: all .25s; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { border-color: rgba(248,81,73,.6); color: #ffd7d4; }
+  .spin {
+    width: 15px; height: 15px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%;
+    display: inline-block; animation: rot .8s linear infinite; vertical-align: -3px;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; }
+  .ro-tag { color: var(--muted); font-size: 12px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px; }
+  button.on { color: var(--ok); border-color: rgba(63,185,80,.55); background: rgba(63,185,80,.1); }
+
+  /* ---------- 工具栏分组行 ----------
+     一行 = 一个 .tb-row。宽的地方两行自然并到一排，窄屏（手机 / 抽屉里）
+     自己折成两行 —— 搜索框 flex:1 让出宽度，按钮永远排得下。 */
+  .tb-row { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
+  .tb-row > .grow { flex: 1 1 90px; min-width: 0; }
+  .chk { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+
+  /* ---------- 下拉菜单（把一排按钮收成一颗，手机上最省地方） ---------- */
+  .menu-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+  .menu {
+    display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+    min-width: 200px; max-width: min(340px, 88vw); max-height: 62vh; overflow: auto;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 14px 32px rgba(0,0,0,.5); padding: 4px;
+  }
+  .menu.open { display: block; }
+  .menu.right { left: auto; right: 0; }
+  .menu .head { padding: 6px 10px 3px; color: var(--muted); font-size: 11.5px; }
+  .menu button {
+    display: block; width: 100%; text-align: left; background: transparent;
+    border: 0; border-radius: 7px; padding: 8px 10px; font-size: 13px; color: var(--text);
+  }
+  .menu button:hover { background: rgba(88,166,255,.14); }
+  .menu button.danger { color: #ffd7d4; }
+  .menu button.danger:hover { background: rgba(248,81,73,.18); }
+  .menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+  .menu .sub { display: block; color: var(--muted); font-size: 11px; margin-top: 1px;
+    word-break: break-all; }
+
+  /* ---------- 预设管理弹层里的条目 ---------- */
+  .pset-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+  .pset-row { display: flex; align-items: center; gap: 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  .pset-info { flex: 1; min-width: 0; }
+  .pset-name { font-size: 13px; }
+  .pset-sub { color: var(--muted); font-size: 11.5px; word-break: break-all; }
+  .empty-sm { color: var(--muted); font-size: 12.5px; padding: 4px 2px; }
+  .sep-line { height: 1px; background: var(--line); margin: 14px 0 12px; }
+
+  /* ---------- 连接设置弹层 ----------
+     布局要点：
+       · 卡片是"头 / 可滚动主体 / 脚"三段 —— 手机上保存按钮永远在屏幕里，
+         不用把一长串表单滚到底才能点保存；
+       · 通道用三段式按钮（3 选 1），比下拉多占不了地方但一眼能看出选的是哪个；
+       · 两条通道 = 两张并列的卡片，**两组字段都常显**（不做折叠，免得多出来
+         "我的字段去哪了"的困惑）；正在使用的那张高亮加色条，另一张淡一点；
+       · 参数用 auto-fit 网格：宽屏一行 2~3 个输入框，窄屏自动折成一列。 */
+  #pop-conn .card { width: min(660px, 96vw); padding: 0; overflow: hidden;
+    display: flex; flex-direction: column; }
+  #pop-conn .conn-head { flex: 0 0 auto; padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--line); }
+  #pop-conn .conn-head h2 { margin: 0 0 6px; }
+  #pop-conn .conn-meta { display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; font-size: 12.5px; }
+  #pop-conn .conn-vm { font-weight: 600; }
+  #pop-conn .conn-os { color: var(--muted); }
+  #pop-conn .conn-body { flex: 1 1 auto; min-height: 0; overflow: auto;
+    padding: 14px 18px 4px; }
+  #pop-conn .foot { flex: 0 0 auto; margin: 0; padding: 12px 18px;
+    border-top: 1px solid var(--line); }
+  /* 「删除凭据」丢到左边，和右边的"取消/保存"拉开距离，免得误点 */
+  #pop-conn .foot #conn-remove { margin-right: auto; }
+
+  /* 小徽标（通道状态 / 测试结果） */
+  .chip { display: inline-block; font-size: 11.5px; padding: 1px 9px;
+    border-radius: 99px; border: 1px solid var(--line); color: var(--muted);
+    white-space: nowrap; }
+  .chip.on { color: var(--accent); border-color: rgba(88,166,255,.5);
+    background: rgba(88,166,255,.1); }
+  .chip.ok { color: var(--ok); border-color: rgba(63,185,80,.5);
+    background: rgba(63,185,80,.1); }
+  .chip.bad { color: var(--danger); border-color: rgba(248,81,73,.5);
+    background: rgba(248,81,73,.1); }
+
+  /* 通道三段式选择 */
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1 1 0; padding: 7px 4px; border-radius: 8px;
+    font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+  .seg button.on { background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600; }
+  .conn-label { display: block; color: var(--muted); font-size: 12.5px;
+    margin-bottom: 6px; }
+
+  /* 两条通道各一张卡片：正在用的高亮 + 左侧色条 */
+  .conn-card { border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px 2px; margin-bottom: 12px; background: rgba(13,17,23,.4);
+    transition: border-color .15s, background .15s, box-shadow .15s; }
+  .conn-card.active { border-color: rgba(88,166,255,.55);
+    background: rgba(88,166,255,.06); box-shadow: inset 3px 0 0 var(--accent); }
+  .conn-card-head { display: flex; align-items: center; gap: 8px; }
+  .conn-card-title { font-size: 13.5px; font-weight: 600; }
+  .conn-card-head .chip { margin-left: auto; }
+  .cdot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--muted); }
+  .conn-card.active .cdot { background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(88,166,255,.18); }
+  .conn-card.configured .cdot { background: var(--ok); }
+  .conn-card.active.configured .cdot { background: var(--accent); }
+  .conn-card > .hint { margin: 4px 0 10px; }
+
+  /* 参数网格（默认：按 148px 自动分列，窄屏自动折行） */
+  .conn-grid { display: grid; gap: 0 12px;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
+  .conn-grid > .wide { grid-column: 1 / -1; }
+
+  /* SSH 卡单独排：端口只占一条窄列（端口号就两三个字符，给一整列太浪费），
+     用户名 / 密码各一列。指纹校验那块另起一行（见 .conn-verify-head）。 */
+  .conn-grid.ssh { grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr); }
+  @media (max-width: 560px) {
+    /* 手机上一律单列，端口缩成短输入框 */
+    .conn-grid.ssh { grid-template-columns: minmax(0, 1fr); }
+    .conn-grid.ssh .port input { max-width: 96px; }
+  }
+
+  /* 主机 / IP 下面那行：上报的 IP 提示 + 一键「填入」 */
+  .conn-auto-row { display: flex; align-items: center; gap: 8px;
+    margin-top: 5px; min-width: 0; }
+  .conn-auto-row .hint { flex: 1 1 auto; min-width: 0; margin: 0; }
+  .conn-auto-row button { flex: 0 0 auto; }
+
+  /* 指纹校验：第一行 = 勾选框 + 「推荐」标签，下面依次是说明、当前指纹 */
+  .conn-verify-head { display: flex; align-items: center; gap: 8px; }
+  .conn-verify-head .chk { color: var(--text); white-space: nowrap; }
+  .conn-field > .conn-fp-row { margin-top: 6px; }
+  /* 关掉校验时那枚指纹"当前不生效"，压暗一点提醒（重新勾上就恢复） */
+  #conn-fp-row { transition: opacity .15s; }
+  #conn-fp-row.off { opacity: .5; }
+  .conn-field { margin-bottom: 10px; min-width: 0; }
+  .conn-field > label { display: block; color: var(--muted);
+    margin-bottom: 4px; font-size: 12.5px; }
+  /* ⚠️ 上一条是 display:block，勾选框那行要单独掰回 flex */
+  .conn-field > label.chk { display: flex; align-items: center; gap: 6px;
+    margin-bottom: 0; color: var(--text); }
+  .conn-field input { width: 100%; }
+  .conn-field .hint { margin-top: 4px; }
+  /* 输入框聚焦时给一圈淡色描边（移动端看不清默认 outline 的变化） */
+  #pop-conn input:focus { box-shadow: 0 0 0 3px rgba(88,166,255,.16); }
+  .hint.warn { color: var(--warn); }
+  /* 一行里塞下：勾选框 + 指纹 + 清除按钮。窄屏装不下时指纹自己换到下一行
+     （flex-basis 170px 撑不下就折），所以不会出现"勾选框孤零零占一行"的样子。 */
+  .conn-fp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .conn-fp-row .hint { flex: 1 1 170px; min-width: 0; margin: 0;
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px;
+    color: var(--muted); word-break: break-all; }
+  /* 没记录指纹时那句是中文说明，用等宽字体反而怪 */
+  .conn-fp-row .hint.plain { font-family: inherit; font-size: 12px; }
+  #conn-test-msg { min-height: 17px; }
+  /* 凭据徽标就是「连接设置」的入口（不再单独占一个标签栏按钮）：
+     抽屉里那枚（控制台的 #guest-cred）点了会 postMessage 过来，
+     独立打开本页时点自己顶栏这枚。 */
+  #cred-badge { cursor: pointer; }
+  #cred-badge:hover { border-color: var(--accent); color: var(--text); }
+  #cred-badge::after { content: " ⚙"; font-size: 11px; opacity: .65; }
+
+  /* ---------- 终端（命令执行，只有 SSH 通道才有） ---------- */
+  .exec-out { flex: 1 1 auto; overflow: auto; padding: 10px 12px;
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+    line-height: 1.55; background: rgba(13,17,23,.45); }
+  .exec-out .empty { padding: 28px 12px; }
+  .exec-block { border-bottom: 1px dashed rgba(51,66,90,.7);
+    padding-bottom: 8px; margin-bottom: 8px; }
+  .exec-block:last-child { border-bottom: 0; }
+  .exec-line { color: var(--accent); word-break: break-all; }
+  .exec-line::before { content: "$ "; color: var(--muted); }
+  .exec-pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all; }
+  .exec-err { color: #ffb4ae; }
+  .exec-meta { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+
+  /* ---------- 注册表：宽屏左右分栏（子键 | 值），窄屏上下两层 ---------- */
+  .reg-split { display: flex; flex: 1 1 auto; overflow: hidden; }
+  .reg-keys-pane { width: 42%; flex: 0 0 auto; border-right: 1px solid var(--line); }
+
+  /* ---------- 被控制台以「文件系统」抽屉 iframe 嵌进来时（url 带 #embed） ----------
+     抽屉自己的标题栏已经写着「文件系统 · 虚拟机名」，本页顶栏（「← 控制台」+ 标题
+     + 凭据徽标）整条都多余了 —— 直接收掉，连高度一起省下来给表格；凭据状态改由
+     抽屉标题栏右端显示（脚本 postCred → 控制台 #guest-cred）。
+     hash 不参与 HTTP 请求，不影响 authSig 验签。 */
+  body.embed header { display: none; }
+  body.embed nav.tabs { padding: 8px 10px 0; }
+  body.embed nav.tabs button { padding: 7px 16px; }
+  body.embed main { padding: 0 10px 10px; }
+  body.embed .tab-page { border-radius: 0 8px 8px 8px; }
+
+  /* 抽屉本体在控制台那边是半透明的（rgba(27,34,45,.8)）：本页的底
+     （body、表格面板）必须跟着透，否则一层不透明的底色会把那点透明度全糊掉。
+     表头是 sticky 的，保持高不透明度 —— 没有毛玻璃垫着，太透会让下面的行透上来
+     跟表头文字叠在一起。 */
+  body.embed { background: transparent; }
+  body.embed .tab-page { background: transparent; }
+  body.embed nav.tabs button.active { background: rgba(32, 42, 56, .72); }
+  body.embed th { background: rgba(42, 54, 70, .94); }
+  /* 同上：底透出来了，禁用按钮就不能再走 opacity（会直接看穿），改实心暗色 */
+  body.embed button:disabled { opacity: 1; background: #22303f;
+    border-color: var(--line); color: var(--muted); }
+  body.embed button.primary:disabled { background: #1d4a6b; border-color: #1d4a6b;
+    color: rgba(255, 255, 255, .7); }
+
+  /* 窄屏（手机，或控制台抽屉被拖窄）：注册表的左右分栏改成上下两层 ——
+     42% 宽的子键栏在手机上只剩几十像素，根本读不出来。 */
+  @media (max-width: 720px) {
+    .reg-split { flex-direction: column; }
+    .reg-keys-pane { width: 100%; max-height: 38%; border-right: 0;
+      border-bottom: 1px solid var(--line); }
+  }
+  @media (max-width: 640px) {
+    header h1 .t2 { display: none; }
+    .hide-sm { display: none; }
+    .toolbar { padding: 8px; gap: 6px; }
+    .tb-row { gap: 6px; }
+    button { padding: 6px 9px; }
+    .menu button { padding: 10px 10px; }   /* 手指点得中 */
+    body.embed nav.tabs { padding: 6px 8px 0; }
+    body.embed main { padding: 0 8px 8px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back-link" href="__CONSOLE_PATH__" style="text-decoration:none"><button type="button" title="返回虚拟机控制台">← 控制台</button></a>
+  <h1>文件系统 <span class="t2">·</span> <span class="vm" id="vm-name">__VM_NAME__</span></h1>
+  <span class="spacer"></span>
+  <span id="cred-badge" title="连接设置：点这里改通道 / IP / 账号">凭据检测中…</span>
+</header>
+
+<nav class="tabs">
+  <button type="button" class="active" data-tab="proc">进程</button>
+  <button type="button" data-tab="files">文件</button>
+  <button type="button" data-tab="reg">注册表</button>
+  <!-- 终端：只有 SSH 通道才有（VMware Tools 拿不到命令输出），默认藏起来，见 applyChannel -->
+  <button type="button" data-tab="exec" style="display:none"
+          title="在虚拟机里执行命令并看输出（需要 SSH 通道）">终端</button>
+</nav>
+
+<main>
+  <!-- ===================== 进程 ===================== -->
+  <section class="tab-page active" id="tab-proc">
+    <div class="toolbar">
+      <!-- 第一行（手机上永远是这一行）：筛选 + 刷新 + 启动 -->
+      <div class="tb-row">
+        <input type="search" id="proc-q" class="grow" placeholder="筛选 PID / 名称 / 命令行…" />
+        <button type="button" id="proc-refresh" title="刷新进程列表">刷新</button>
+        <div class="menu-wrap">
+          <button type="button" class="primary" id="proc-start"
+                  title="常用程序下拉：点一下直接启动">启动 ▾</button>
+          <div class="menu right" id="start-menu"></div>
+        </div>
+      </div>
+      <!-- 第二行：结束进程预设 + 自动刷新间隔（原来是勾选框，手机上点不准，改下拉） -->
+      <div class="tb-row">
+        <div class="menu-wrap">
+          <button type="button" class="danger" id="proc-kill"
+                  title="按预设结束进程（名称 / 命令行关键字）">结束 ▾</button>
+          <div class="menu right" id="kill-menu"></div>
+        </div>
+        <div class="menu-wrap">
+          <button type="button" id="proc-auto">自动刷新：关 ▾</button>
+          <div class="menu right" id="auto-menu"></div>
+        </div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="num sortable" data-k="pid">PID</th>
+          <th class="sortable" data-k="name">名称</th>
+          <th class="hide-sm">属主</th>
+          <th>命令行</th>
+          <th class="hide-sm">启动时间 (UTC)</th>
+          <th>状态</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="proc-body"><tr><td colspan="7"><div class="empty">点击「刷新」加载进程列表</div></td></tr></tbody>
+      </table>
+    </div>
+    <div class="statusbar" id="proc-status"></div>
+  </section>
+
+  <!-- ===================== 文件 ===================== -->
+  <section class="tab-page" id="tab-files">
+    <div class="toolbar">
+      <!-- 第一行：路径 + 前往（手机上这两样最常用，独占一行看得清） -->
+      <div class="tb-row">
+        <button type="button" id="fs-up" title="上一级目录">↑</button>
+        <input type="text" id="fs-path" class="grow" />
+        <button type="button" id="fs-go">前往</button>
+      </div>
+      <!-- 第二行：收藏目录下拉 + 刷新 / 新建 / 上传（文案精简到两字以内） -->
+      <div class="tb-row">
+        <div class="menu-wrap">
+          <button type="button" id="fs-fav" title="常用目录：点一下直接进入">★ 目录 ▾</button>
+          <div class="menu" id="fav-menu"></div>
+        </div>
+        <button type="button" id="fs-refresh" title="刷新当前目录">刷新</button>
+        <button type="button" id="fs-mkdir" title="在当前目录下新建目录">新建</button>
+        <button type="button" class="primary" id="fs-upload" title="上传文件到当前目录">上传</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>名称</th>
+          <th class="num">大小</th>
+          <th class="hide-sm">修改时间 (UTC)</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="fs-body"><tr><td colspan="4"><div class="empty">点击「刷新」加载目录</div></td></tr></tbody>
+      </table>
+    </div>
+    <div class="statusbar" id="fs-status"></div>
+    <input type="file" id="fs-input" multiple style="display:none" />
+  </section>
+
+  <!-- ===================== 注册表 ===================== -->
+  <section class="tab-page" id="tab-reg">
+    <div class="toolbar">
+      <!-- 第一行：键路径 + 查询（手机上就不用为了点「查询」把长路径挤成一条缝） -->
+      <div class="tb-row">
+        <input type="text" id="reg-key" class="grow"
+               value="HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" />
+        <button type="button" class="primary" id="reg-query">查询</button>
+      </div>
+      <!-- 第二行：常用键下拉（长路径不用手打）+ 递归 + 只读标记 -->
+      <div class="tb-row">
+        <div class="menu-wrap">
+          <button type="button" id="reg-fav" title="常用注册表键：点一下直接查询">★ 常用 ▾</button>
+          <div class="menu" id="reg-menu"></div>
+        </div>
+        <label class="chk"><input type="checkbox" id="reg-recursive" /> 递归</label>
+        <span class="ro-tag" title="本集成只提供只读查询，刻意不提供写注册表操作">只读</span>
+      </div>
+    </div>
+    <!-- 宽屏左右分栏、窄屏上下两层（见 CSS 里的 .reg-split / 720px 媒体查询） -->
+    <div class="reg-split">
+      <div class="table-wrap reg-keys-pane">
+        <table>
+          <thead><tr><th>子键</th></tr></thead>
+          <tbody id="reg-keys"><tr><td><div class="empty">无子键</div></td></tr></tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="flex:1 1 auto">
+        <table>
+          <thead><tr><th>名称</th><th>类型</th><th>值</th></tr></thead>
+          <tbody id="reg-vals"><tr><td colspan="3"><div class="empty">无值</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="statusbar" id="reg-status"></div>
+  </section>
+
+  <!-- ===================== 终端（执行命令，只有 SSH 通道才有） ===================== -->
+  <section class="tab-page" id="tab-exec">
+    <div class="toolbar">
+      <div class="tb-row">
+        <input type="text" id="exec-cmd" class="grow mono" autocomplete="off"
+               spellcheck="false" placeholder="例如：systemctl status nginx" />
+        <button type="button" class="primary" id="exec-run">运行</button>
+        <div class="menu-wrap">
+          <button type="button" id="exec-fav" title="常用命令：点一下直接执行">★ 常用 ▾</button>
+          <div class="menu right" id="exec-menu"></div>
+        </div>
+      </div>
+    </div>
+    <div class="exec-out" id="exec-out">
+      <div class="empty">输入命令后回车或点「运行」。<br />
+        以「连接设置」里的 SSH 账号身份执行，一次性、默认最多等 20 秒；<br />
+        不会自己结束的命令请用 <span class="mono">nohup 命令 &amp;</span> 放后台。</div>
+    </div>
+    <div class="statusbar" id="exec-status"></div>
+  </section>
+</main>
+
+<!-- 启动程序弹层 -->
+<div class="pop" id="pop-start">
+  <div class="card">
+    <h2>在虚拟机内启动程序</h2>
+    <div class="form-row">
+      <label>程序路径（必填）</label>
+      <input type="text" id="st-program" placeholder="C:\Windows\System32\cmd.exe" />
+    </div>
+    <div class="form-row">
+      <label>命令行参数</label>
+      <input type="text" id="st-args" placeholder='/c echo hi &gt; C:\test.txt' />
+    </div>
+    <div class="form-row">
+      <label>工作目录（可选）</label>
+      <input type="text" id="st-cwd" placeholder="C:\" />
+    </div>
+    <div class="form-row">
+      <label>环境变量（可选，每行一个 KEY=VALUE）</label>
+      <textarea id="st-env" placeholder="FOO=bar&#10;LANG=zh_CN"></textarea>
+    </div>
+    <div class="foot">
+      <!-- 在这里填一次，就能「存为常用」进「启动 ▾」的下拉里，下次一点就走 -->
+      <button type="button" id="st-save" title="把上面填的存进「启动 ▾」下拉">存为常用</button>
+      <span style="flex:1"></span>
+      <button type="button" data-close>取消</button>
+      <button type="button" class="primary" id="st-run">启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 预设管理弹层（常用程序 / 结束预设 / 收藏目录 / 常用键）：内容全由脚本渲染 -->
+<div class="pop" id="pop-preset"><div class="card" id="preset-card"></div></div>
+
+<!-- 连接设置弹层：选通道 + 填 SSH 参数 + 测试连接（密码永不回显） -->
+<div class="pop" id="pop-conn">
+  <div class="card">
+    <!-- 头：虚拟机 + 当前通道（固定不滚动） -->
+    <div class="conn-head">
+      <h2>系统连接设置</h2>
+      <div class="conn-meta">
+        <span class="conn-vm" id="conn-vm-name">—</span>
+        <span class="conn-os" id="conn-guest-os"></span>
+        <span class="chip" id="conn-chip">当前通道：—</span>
+      </div>
+    </div>
+
+    <!-- 主体：只有这一块滚动 -->
+    <div class="conn-body">
+      <div class="conn-field">
+        <span class="conn-label">使用哪条通道</span>
+        <div class="seg" id="conn-seg">
+          <button type="button" data-transport="auto">自动</button>
+          <button type="button" data-transport="tools">VMware Tools</button>
+          <button type="button" data-transport="ssh">SSH</button>
+        </div>
+        <div class="hint">自动 = Linux 优先 SSH、Windows 用 VMware Tools；选了 SSH 但没填用户名会自动退回 VMware Tools。</div>
+      </div>
+
+      <!-- 通道 1：SSH / SFTP —— 用客户机本地账号登录 sshd -->
+      <div class="conn-card" id="conn-ssh-card">
+        <div class="conn-card-head">
+          <span class="cdot"></span>
+          <span class="conn-card-title">SSH 通道</span>
+          <span class="chip" id="conn-ssh-state">未配置</span>
+        </div>
+        <div class="hint">用客户机里的本地账号登录 sshd（客户机需要开着 sshd）。</div>
+        <div class="hint warn" id="conn-ssh-warn" style="display:none">
+          选了 SSH 但还没填用户名：实际会退回 VMware Tools 通道。</div>
+        <div class="conn-grid ssh">
+          <div class="conn-field wide">
+            <label for="conn-ssh-host">主机 / IP</label>
+            <input type="text" id="conn-ssh-host" autocomplete="off"
+                   placeholder="留空 = 用虚拟机上报的 IP" />
+            <!-- 上报的 IP + 一键填入：省得手抄那一串数字 -->
+            <div class="conn-auto-row">
+              <span class="hint" id="conn-auto-host"></span>
+              <button type="button" class="sm" id="conn-use-auto"
+                      title="把虚拟机上报的 IP 填进上面的输入框">填入</button>
+            </div>
+          </div>
+          <div class="conn-field port">
+            <label for="conn-ssh-port">端口</label>
+            <input type="text" id="conn-ssh-port" placeholder="22" autocomplete="off" />
+          </div>
+          <div class="conn-field">
+            <label for="conn-ssh-user">用户名</label>
+            <input type="text" id="conn-ssh-user" placeholder="root" autocomplete="off" />
+          </div>
+          <div class="conn-field">
+            <label for="conn-ssh-pass">密码</label>
+            <input type="password" id="conn-ssh-pass" autocomplete="new-password" />
+          </div>
+          <!-- 指纹校验：第一行勾选框 + 「推荐」标签，第二行说明，第三行当前指纹状态 -->
+          <div class="conn-field wide">
+            <div class="conn-verify-head">
+              <label class="chk" for="conn-ssh-verify">
+                <input type="checkbox" id="conn-ssh-verify" checked /> 校验主机指纹</label>
+              <span class="chip ok">推荐</span>
+            </div>
+            <div class="hint">首次连接成功后记住主机指纹；之后指纹不一致会直接拒绝连接
+              —— 重装系统、克隆虚拟机、回滚快照都会换指纹。</div>
+            <div class="conn-fp-row" id="conn-fp-row">
+              <span class="hint" id="conn-fp"></span>
+              <button type="button" class="sm" id="conn-fp-clear">清除</button>
+            </div>
+          </div>
+          <div class="conn-field wide">
+            <div class="conn-fp-row">
+              <button type="button" id="conn-test">测试连接</button>
+              <span class="chip" id="conn-test-chip">未测试</span>
+            </div>
+            <div class="hint" id="conn-test-msg"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 通道 2：VMware Tools —— **客户机账号**，由 vgauth 代校验（不是 Tools 自己的账号） -->
+      <div class="conn-card" id="conn-tools-card">
+        <div class="conn-card-head">
+          <span class="cdot"></span>
+          <span class="conn-card-title">VMware Tools 通道</span>
+          <span class="chip" id="conn-tools-state">未配置</span>
+        </div>
+        <div class="hint">客户机操作系统自己的账号（Linux 的 root / Windows 的 Administrator）：
+          由 VMware Tools 的 vgauth 代校验，需要客户机装 open-vm-tools + vgauthd。留空 = 不改已存值。</div>
+        <div class="conn-grid">
+          <div class="conn-field">
+            <label for="conn-tools-user">客户机用户名</label>
+            <input type="text" id="conn-tools-user" autocomplete="off" />
+          </div>
+          <div class="conn-field">
+            <label for="conn-tools-pass">密码</label>
+            <input type="password" id="conn-tools-pass" autocomplete="new-password" />
+          </div>
+          <div class="conn-field">
+            <label for="conn-tools-domain">域（Windows 可选）</label>
+            <input type="text" id="conn-tools-domain" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 脚：保存/取消固定在底部，手机上不用滚到底 -->
+    <div class="foot">
+      <!-- 配错了（比如密码不对）就得能一键清掉，否则页面会一直连不上 -->
+      <button type="button" class="danger" id="conn-remove"
+              title="清掉这台虚拟机的全部连接配置（两条通道一起）">删除凭据</button>
+      <button type="button" data-close>取消</button>
+      <button type="button" class="primary" id="conn-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var API_PATH = "__GUEST_API__";
+  var UPLOAD_LIMIT = parseInt("__UPLOAD_LIMIT__", 10) || 16000000;
+
+  /* 控制台点「文件系统」时把本页塞进右侧抽屉 iframe，并在 url 尾巴挂了 #embed：
+     这里据此切到"嵌入形态"（见 CSS 的 body.embed）——顶栏（标题 / 返回控制台 /
+     凭据徽标）整条收起，交给抽屉的标题栏；直接打开本页时没有这个 hash，
+     布局与从前完全一致。 */
+  var EMBEDDED = location.hash.replace(/^#/, "").split("&").indexOf("embed") >= 0;
+  if (EMBEDDED) document.body.classList.add("embed");
+
+  /* 嵌入形态下顶栏没了，凭据状态得让外面知道：检测完 postMessage 给父页面
+     （控制台把它贴在抽屉标题栏右端）。state: pending / ok / bad。
+     直接打开本页时不发消息，页内那枚 #cred-badge 照旧工作。 */
+  function postCred(state, text) {
+    if (!EMBEDDED) return;
+    try {
+      window.parent.postMessage(
+        { type: "esxi-guest-cred", state: state, text: text },
+        window.location.origin
+      );
+    } catch (e) { /* 父页面不接受就算了，不影响任何功能 */ }
+  }
+
+  /* 反向通道：控制台抽屉标题栏那枚凭据徽标点了会 postMessage 过来，
+     本页据此打开「连接设置」弹窗（嵌入时顶栏是收起的，自己没有入口）。
+     ⚠️ 必须在下面 postCred("pending") 之前注册：控制台一收到那条消息就可能
+        立刻回一条"打开设置"，注册晚了会把指令丢掉。 */
+  window.addEventListener("message", function (e) {
+    if (e.origin !== window.location.origin) return;
+    if (e.source !== window.parent) return;
+    var data = e.data;
+    if (!data || data.type !== "esxi-guest-open-conn") return;
+    // 让一步再开：本页的初始化（预设、徽标）可能还没跑完
+    setTimeout(function () { openConnDialog(); }, 0);
+  });
+
+  postCred("pending", "凭据检测中…");
+
+  /* ---------------- 通用工具 ---------------- */
+  function $(id) { return document.getElementById(id); }
+  function ce(tag, text, cls) {
+    var el = document.createElement(tag);
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    if (cls) el.className = cls;
+    return el;
+  }
+  var toastTimer = null;
+  function toast(msg, isErr) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.className = "show" + (isErr ? " err" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = ""; }, isErr ? 6000 : 2600);
+  }
+  function fmtSize(n) {
+    if (n === null || n === undefined) return "";
+    n = Number(n);
+    if (n < 1024) return n + " B";
+    var u = ["KB", "MB", "GB", "TB"];
+    var i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+    return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
+  }
+  function fmtTime(s) { return s ? String(s).replace("T", " ").replace(/\+.*$/, "") : ""; }
+  function joinPath(dir, name) {
+    var sep = dir.indexOf("/") === 0 && dir.indexOf("\\") < 0 ? "/" : "\\";
+    return dir.replace(/[\\\/]+$/, "") + sep + name;
+  }
+  function parentPath(p) {
+    var m = String(p).replace(/[\\\/]+$/, "").match(/^(.*)[\\\/]([^\\\/]*)$/);
+    return m ? m[1] : p;
+  }
+
+  //: 这些 op 是"真的碰了客户机"的：跑通一次就说明通道确实可用（见 markChannelOk）
+  var LIVE_OPS = {
+    list_processes: 1, list_files: 1, list_registry: 1, exec: 1,
+    terminate_process: 1, start_program: 1, make_directory: 1, remove_path: 1
+  };
+
+  function call(op, extra) {
+    var payload = Object.assign({ op: op }, extra || {});
+    return fetch(API_PATH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (!resp.ok || data.error) {
+          var err = new Error(data.error || ("HTTP " + resp.status + " " + resp.statusText));
+          // 带上状态码：409 = 凭据/通道没配好（配置问题，不是网络抖动），
+          // 自动刷新靠它决定"再轮询下去也没意义，停掉"
+          err.status = resp.status;
+          throw err;
+        }
+        if (LIVE_OPS[op]) markChannelOk();
+        return data;
+      });
+    });
+  }
+
+  /* ================= 预设（出厂 + 自己写的） =================
+     所有"常用XXX"都是同一个套路：代码里写死一份出厂预设（DEFAULT_*），用户自己
+     加的存 localStorage（presetStore），两者合并后才是下拉里看到的内容。
+     隐私模式 / 关掉存储时读写会抛 —— 忽略即可，只影响"记住"，不影响本次使用。
+     ⚠️ 想要改出厂预设，直接改下面这几个 DEFAULT_* 数组即可（名字 + 路径）。 */
+  var PRESET_KEY = "esxi-guest-presets-v1";
+
+  var DEFAULT_START = [
+    { name: "记事本", path: "C:\\Windows\\notepad.exe" },
+    { name: "命令提示符", path: "C:\\Windows\\System32\\cmd.exe", args: "/k" },
+    { name: "计算器", path: "C:\\Windows\\System32\\calc.exe" },
+    { name: "任务管理器", path: "C:\\Windows\\System32\\taskmgr.exe" },
+    { name: "注册表编辑器", path: "C:\\Windows\\regedit.exe" },
+    { name: "画图", path: "C:\\Windows\\System32\\mspaint.exe" },
+    { name: "控制面板", path: "C:\\Windows\\System32\\control.exe" },
+    { name: "资源管理器", path: "C:\\Windows\\explorer.exe" }
+  ];
+  var DEFAULT_KILL = [
+    { name: "记事本", match: "notepad" },
+    { name: "计算器", match: "calc" },
+    { name: "画图", match: "mspaint" },
+    { name: "命令提示符", match: "cmd.exe" },
+    { name: "Edge 浏览器", match: "msedge" },
+    { name: "Chrome 浏览器", match: "chrome" }
+  ];
+  var DEFAULT_DIR = [
+    { name: "桌面", path: "C:\\Users\\Public\\Desktop" },
+    { name: "管理员桌面", path: "C:\\Users\\Administrator\\Desktop" },
+    { name: "下载", path: "C:\\Users\\Public\\Downloads" },
+    { name: "用户目录", path: "C:\\Users" },
+    { name: "System32", path: "C:\\Windows\\System32" },
+    { name: "临时目录", path: "C:\\Windows\\Temp" },
+    { name: "程序目录", path: "C:\\Program Files" },
+    { name: "程序数据", path: "C:\\ProgramData" },
+    { name: "C 盘根目录", path: "C:\\" }
+  ];
+  //: 走 SSH 通道时（基本就是 Linux）换一套目录 / 程序预设，否则点开全是 C:\ 很别扭
+  var DEFAULT_DIR_LINUX = [
+    { name: "根目录", path: "/" },
+    { name: "用户主目录", path: "/home" },
+    { name: "root 主目录", path: "/root" },
+    { name: "配置目录", path: "/etc" },
+    { name: "日志目录", path: "/var/log" },
+    { name: "临时目录", path: "/tmp" },
+    { name: "可选软件", path: "/opt" },
+    { name: "数据目录", path: "/var/lib" },
+    { name: "Docker 目录", path: "/var/lib/docker" }
+  ];
+  var DEFAULT_START_LINUX = [
+    { name: "Shell", path: "/bin/bash" },
+    { name: "磁盘占用", path: "/bin/df", args: "-h" },
+    { name: "系统日志尾部", path: "/usr/bin/tail", args: "-n 50 /var/log/syslog" },
+    { name: "内核信息", path: "/usr/bin/uname", args: "-a" }
+  ];
+  //: 终端「★ 常用」里的出厂命令（Linux 向）：点一下直接执行
+  var DEFAULT_CMD = [
+    { name: "系统信息", cmd: "uname -a && uptime" },
+    { name: "磁盘占用", cmd: "df -h" },
+    { name: "内存占用", cmd: "free -m" },
+    { name: "网络地址", cmd: "ip -br a || ip a" },
+    { name: "监听端口", cmd: "ss -tulpn || netstat -tulpn" },
+    { name: "占用最高的进程", cmd: "ps aux --sort=-%cpu | head -n 12" },
+    { name: "近 50 条系统日志", cmd: "journalctl -n 50 --no-pager" },
+    { name: "Docker 容器", cmd: "docker ps -a" },
+    { name: "启动失败的服务", cmd: "systemctl --failed" }
+  ];
+  var DEFAULT_REG = [
+    { name: "开机启动项（本机）", path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" },
+    { name: "开机启动项（当前用户）", path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" },
+    { name: "已安装程序", path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" },
+    { name: "已安装程序（32 位）", path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall" },
+    { name: "系统服务", path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services" },
+    { name: "系统环境变量", path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" },
+    { name: "系统版本信息", path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion" },
+    { name: "网络配置", path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters" }
+  ];
+
+  var presetStore = { start: [], kill: [], dir: [], reg: [], cmd: [] };
+
+  function presetLoad() {
+    try {
+      var raw = window.localStorage.getItem(PRESET_KEY);
+      if (!raw) return;
+      var obj = JSON.parse(raw);
+      ["start", "kill", "dir", "reg", "cmd"].forEach(function (k) {
+        if (Array.isArray(obj[k])) {
+          presetStore[k] = obj[k].filter(function (x) {
+            return x && typeof x === "object";
+          });
+        }
+      });
+    } catch (e) { /* 数据损坏 / 存储不可用：退回出厂预设 */ }
+  }
+  function presetSave() {
+    try { window.localStorage.setItem(PRESET_KEY, JSON.stringify(presetStore)); }
+    catch (e) { toast("浏览器不允许保存，这次改动只在当前页面有效", true); }
+  }
+  function presetAll(kind) {
+    var defs = { start: DEFAULT_START, kill: DEFAULT_KILL,
+                 dir: DEFAULT_DIR, reg: DEFAULT_REG, cmd: DEFAULT_CMD };
+    // 走 SSH 通道（Linux）时换成 Linux 那套出厂预设；用户自己收藏的照旧追加在后面
+    if (useLinux && kind === "dir") defs.dir = DEFAULT_DIR_LINUX;
+    if (useLinux && kind === "start") defs.start = DEFAULT_START_LINUX;
+    return (defs[kind] || []).concat(presetStore[kind] || []);
+  }
+
+  /* ---------------- 下拉菜单（把一排按钮收成一颗） ---------------- */
+  var openMenu = null;
+  function closeMenu() {
+    if (!openMenu) return;
+    openMenu.classList.remove("open");
+    openMenu = null;
+  }
+  function toggleMenu(menu) {
+    var wasOpen = menu.classList.contains("open");
+    closeMenu();
+    if (!wasOpen) { menu.classList.add("open"); openMenu = menu; }
+  }
+  function menuHead(text) { return ce("div", text, "head"); }
+  function menuSep() { return ce("div", null, "sep"); }
+  function menuItem(label, sub, onClick, cls) {
+    var b = ce("button", label, cls || "");
+    if (sub) b.appendChild(ce("span", sub, "sub"));
+    b.addEventListener("click", function () { closeMenu(); onClick(); });
+    return b;
+  }
+  // 点空白 / 按 Esc 收起：⚠️ 判断 .menu-wrap 是为了别把"刚点开的那一下"当场收掉
+  document.addEventListener("click", function (e) {
+    if (!openMenu) return;
+    if (openMenu.contains(e.target)) return;
+    if (e.target.closest && e.target.closest(".menu-wrap")) return;
+    closeMenu();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    closeMenu();
+    closePresetManager();
+    $("pop-start").classList.remove("open");
+    $("pop-conn").classList.remove("open");
+  });
+
+  /* ---------------- 自动刷新（原来是个勾选框，手机上点不准，改成下拉） ---------------- */
+  var AUTO_OPTS = [
+    { label: "关", sec: 0 },
+    { label: "5 秒", sec: 5 },
+    { label: "10 秒", sec: 10 },
+    { label: "20 秒", sec: 20 },
+    { label: "30 秒", sec: 30 }
+  ];
+  var AUTO_KEY = "esxi-guest-auto-sec";
+  var autoSec = 0;
+  var procTimer = null;
+  (function readAutoSec() {
+    try {
+      var v = parseInt(window.localStorage.getItem(AUTO_KEY), 10);
+      if (!isNaN(v) && v >= 0) autoSec = v;
+    } catch (e) { /* 忽略 */ }
+  })();
+
+  function renderAutoMenu() {
+    var m = $("auto-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("自动刷新间隔"));
+    AUTO_OPTS.forEach(function (o) {
+      m.appendChild(menuItem((o.sec === autoSec ? "✓ " : "") + o.label,
+        o.sec ? "每 " + o.sec + " 秒拉一次进程列表" : "只在点「刷新」时拉取",
+        function () { setAutoSec(o.sec); },
+        o.sec === autoSec ? "on" : ""));
+    });
+  }
+  function setAutoSec(sec) {
+    autoSec = sec;
+    try { window.localStorage.setItem(AUTO_KEY, String(sec)); } catch (e) { /* 忽略 */ }
+    var btn = $("proc-auto");
+    btn.textContent = "自动刷新：" + (sec ? sec + " 秒" : "关") + " ▾";
+    btn.classList.toggle("on", sec > 0);
+    restartProcTimer();
+    renderAutoMenu();
+  }
+  function restartProcTimer() {
+    clearInterval(procTimer);
+    procTimer = null;
+    if (!autoSec) return;
+    procTimer = setInterval(function () {
+      // 切到别的标签页就别再拉数据了（看不到还白占 ESXi 连接）
+      if (current !== "proc") return;
+      call("list_processes").then(function (d) {
+        procData = d.processes || [];
+        renderProcesses();
+      }).catch(function (e) {
+        // 409 = 凭据/通道没配好（密码错了、没填账号……）。这种情况下每 N 秒重试一次
+        // 只会让浏览器控制台刷满失败请求，直接停下来并说明原因。
+        if (e && e.status === 409) {
+          setAutoSec(0);
+          toast("已暂停自动刷新：" + e.message, true);
+        }
+      });
+    }, autoSec * 1000);
+  }
+
+  /* ---------------- 进程：启动 / 结束 ---------------- */
+  // 点预设 = 直接启动，不等弹层（手机上少点两下）；结果用 toast 反馈
+  function startPreset(p) {
+    toast("正在启动：" + p.name + " …");
+    call("start_program", {
+      program_path: p.path,
+      arguments: p.args || "",
+      working_directory: p.cwd || "",
+    }).then(function (data) {
+      toast("已启动 " + p.name + "（PID " + data.pid + "）");
+      if (current === "proc") loadProcesses();
+    }).catch(function (e) {
+      toast("启动 " + p.name + " 失败：" + e.message, true);
+    });
+  }
+  // 结束预设按"名称 / 命令行关键字"匹配：先拉一次最新进程表，再让用户确认
+  function killPreset(p) {
+    var key = String(p.match || p.name || "").toLowerCase();
+    if (!key) return;
+    toast("正在查找匹配「" + p.match + "」的进程…");
+    call("list_processes").then(function (data) {
+      var hits = (data.processes || []).filter(function (x) {
+        if (x.exit_code !== null && x.exit_code !== undefined) return false;
+        return String(x.name || "").toLowerCase().indexOf(key) >= 0 ||
+               String(x.cmd_line || "").toLowerCase().indexOf(key) >= 0;
+      });
+      if (!hits.length) {
+        toast("没有找到匹配「" + p.match + "」的进程", true);
+        return;
+      }
+      var desc = hits.slice(0, 8).map(function (x) {
+        return "PID " + x.pid + "  " + x.name;
+      }).join("\n");
+      if (hits.length > 8) desc += "\n……共 " + hits.length + " 个";
+      if (!confirm("确认结束以下 " + hits.length + " 个进程？\n未保存的数据会丢失。\n\n" + desc)) {
+        return;
+      }
+      var ok = 0, bad = 0;
+      hits.reduce(function (chain, x) {
+        return chain.then(function () {
+          return call("terminate_process", { pid: x.pid }).then(
+            function () { ok++; },
+            function () { bad++; }
+          );
+        });
+      }, Promise.resolve()).then(function () {
+        toast("已结束 " + ok + " 个进程" + (bad ? "，失败 " + bad + " 个" : ""));
+        if (current === "proc") loadProcesses();
+      });
+    }).catch(function (e) { toast("查询进程失败：" + e.message, true); });
+  }
+
+  function renderStartMenu() {
+    var m = $("start-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("点一下直接启动"));
+    presetAll("start").forEach(function (p) {
+      m.appendChild(menuItem(p.name, p.path + (p.args ? " " + p.args : ""),
+        function () { startPreset(p); }));
+    });
+    m.appendChild(menuSep());
+    m.appendChild(menuItem("自定义启动…", "填路径 / 参数 / 环境变量",
+      function () { $("pop-start").classList.add("open"); }));
+    m.appendChild(menuItem("管理常用程序…", "增删自己写的预设",
+      function () { openPresetManager("start"); }));
+  }
+  function renderKillMenu() {
+    var m = $("kill-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("按关键字结束（先确认）"));
+    presetAll("kill").forEach(function (p) {
+      m.appendChild(menuItem(p.name, "匹配：" + p.match, function () { killPreset(p); }, "danger"));
+    });
+    m.appendChild(menuSep());
+    m.appendChild(menuItem("管理结束预设…", "增删自己写的预设",
+      function () { openPresetManager("kill"); }));
+  }
+
+  /* ---------------- 文件：常用目录 ---------------- */
+  function renderFavMenu() {
+    var m = $("fav-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("点一下直接进入"));
+    presetAll("dir").forEach(function (p) {
+      m.appendChild(menuItem(p.name, p.path, function () { loadFiles(p.path); }));
+    });
+    m.appendChild(menuSep());
+    m.appendChild(menuItem("收藏当前目录…", fsCurrent, function () {
+      var name = prompt("给这个目录取个名字：", fsCurrent);
+      if (name === null) return;
+      name = String(name).trim() || fsCurrent;
+      presetStore.dir.push({ name: name, path: fsCurrent });
+      presetSave();
+      toast("已收藏：" + name);
+      renderFavMenu();
+    }));
+    m.appendChild(menuItem("管理收藏…", "增删自己收藏的目录",
+      function () { openPresetManager("dir"); }));
+  }
+
+  /* ---------------- 注册表：常用键 ---------------- */
+  function renderRegMenu() {
+    var m = $("reg-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("点一下直接查询"));
+    presetAll("reg").forEach(function (p) {
+      m.appendChild(menuItem(p.name, p.path, function () {
+        $("reg-key").value = p.path;
+        loadRegistry();
+      }));
+    });
+    m.appendChild(menuSep());
+    m.appendChild(menuItem("收藏当前键…", null, function () {
+      var key = $("reg-key").value.trim();
+      if (!key) { toast("请先输入注册表键路径", true); return; }
+      var name = prompt("给这个键取个名字：", key.split("\\").pop() || key);
+      if (name === null) return;
+      name = String(name).trim() || key;
+      presetStore.reg.push({ name: name, path: key });
+      presetSave();
+      toast("已收藏：" + name);
+      renderRegMenu();
+    }));
+    m.appendChild(menuItem("管理收藏…", null, function () { openPresetManager("reg"); }));
+  }
+
+  /* ---------------- 终端：常用命令 ---------------- */
+  function renderExecMenu() {
+    var m = $("exec-menu");
+    m.textContent = "";
+    m.appendChild(menuHead("点一下直接在虚拟机里执行"));
+    presetAll("cmd").forEach(function (p) {
+      m.appendChild(menuItem(p.name, p.cmd, function () { runCommand(p.cmd); }));
+    });
+    m.appendChild(menuSep());
+    m.appendChild(menuItem("管理常用命令…", "增删自己写的预设",
+      function () { openPresetManager("cmd"); }));
+  }
+
+  /* ---------------- 预设管理弹层（四种预设置通用） ---------------- */
+  var PRESET_KINDS = {
+    start: {
+      title: "常用程序",
+      hint: "点「启动 ▾」里就能直接起这些程序；出厂那批不可删，下面只列你自己写的。",
+      fields: [
+        { k: "name", label: "名称", ph: "记事本", required: true },
+        { k: "path", label: "程序路径", ph: "C:\\Windows\\notepad.exe", required: true },
+        { k: "args", label: "参数（可选）", ph: "/k" }
+      ],
+      brief: function (p) { return p.path + (p.args ? " " + p.args : ""); }
+    },
+    kill: {
+      title: "结束进程预设",
+      hint: "按名称或命令行关键字匹配（不区分大小写），点「结束 ▾」里的项会先拉最新进程表再确认。",
+      fields: [
+        { k: "name", label: "名称", ph: "记事本", required: true },
+        { k: "match", label: "进程名 / 命令行关键字", ph: "notepad", required: true }
+      ],
+      brief: function (p) { return "匹配：" + p.match; }
+    },
+    dir: {
+      title: "收藏目录",
+      hint: "点「★ 目录 ▾」里的项会直接跳到该目录。",
+      fields: [
+        { k: "name", label: "名称", ph: "桌面", required: true },
+        { k: "path", label: "目录路径", ph: "C:\\Users\\Public\\Desktop", required: true }
+      ],
+      brief: function (p) { return p.path; }
+    },
+    reg: {
+      title: "常用注册表键",
+      hint: "点「★ 常用 ▾」里的项会直接查询该键。",
+      fields: [
+        { k: "name", label: "名称", ph: "开机启动项", required: true },
+        { k: "path", label: "键路径", ph: "HKEY_LOCAL_MACHINE\\SOFTWARE\\...", required: true }
+      ],
+      brief: function (p) { return p.path; }
+    },
+    cmd: {
+      title: "常用命令",
+      hint: "点「★ 常用 ▾」里的项会直接在虚拟机里执行（终端标签页，仅 SSH 通道）。",
+      fields: [
+        { k: "name", label: "名称", ph: "重启 nginx", required: true },
+        { k: "cmd", label: "命令", ph: "systemctl restart nginx", required: true }
+      ],
+      brief: function (p) { return p.cmd; }
+    }
+  };
+
+  function refreshPresetMenus() {
+    renderStartMenu(); renderKillMenu(); renderFavMenu(); renderRegMenu();
+    renderExecMenu();
+  }
+  function closePresetManager() { $("pop-preset").classList.remove("open"); }
+
+  function openPresetManager(kind) {
+    var def = PRESET_KINDS[kind];
+    var mine = presetStore[kind];
+    var card = $("preset-card");
+    card.textContent = "";
+    card.appendChild(ce("h2", def.title));
+    card.appendChild(ce("div", def.hint, "hint"));
+
+    // 已存在的自定义预设（出厂那批不在这里删）
+    var list = ce("div", null, "pset-list");
+    if (!mine.length) {
+      list.appendChild(ce("div", "还没有自己写的预设", "empty-sm"));
+    }
+    mine.forEach(function (p, idx) {
+      var row = ce("div", null, "pset-row");
+      var info = ce("div", null, "pset-info");
+      info.appendChild(ce("div", p.name, "pset-name"));
+      info.appendChild(ce("div", def.brief(p), "pset-sub"));
+      row.appendChild(info);
+      var del = ce("button", "删除", "sm danger");
+      del.addEventListener("click", function () {
+        mine.splice(idx, 1);
+        presetSave();
+        refreshPresetMenus();
+        openPresetManager(kind);        // 原地重画
+        toast("已删除：" + p.name);
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+
+    card.appendChild(ce("div", null, "sep-line"));
+
+    // 新增表单
+    var inputs = {};
+    def.fields.forEach(function (f) {
+      var wrap = ce("div", null, "form-row");
+      wrap.appendChild(ce("label", f.label));
+      var input = ce("input");
+      input.type = "text";
+      input.placeholder = f.ph || "";
+      wrap.appendChild(input);
+      inputs[f.k] = input;
+      card.appendChild(wrap);
+    });
+
+    var foot = ce("div", null, "foot");
+    var closeBtn = ce("button", "关闭");
+    closeBtn.addEventListener("click", closePresetManager);
+    var addBtn = ce("button", "添加", "primary");
+    addBtn.addEventListener("click", function () {
+      var obj = {};
+      for (var i = 0; i < def.fields.length; i++) {
+        var f = def.fields[i];
+        var val = inputs[f.k].value.trim();
+        if (f.required && !val) { toast("「" + f.label + "」不能为空", true); return; }
+        obj[f.k] = val;
+      }
+      mine.push(obj);
+      presetSave();
+      refreshPresetMenus();
+      openPresetManager(kind);
+      toast("已添加：" + obj.name);
+    });
+    foot.appendChild(closeBtn);
+    foot.appendChild(addBtn);
+    card.appendChild(foot);
+
+    var pop = $("pop-preset");
+    pop.classList.add("open");
+    pop.onclick = function (e) { if (e.target === pop) closePresetManager(); };
+  }
+
+  /* ---------------- 标签页 ---------------- */
+  var current = "proc";
+  var loaded = { proc: false, files: false, reg: false };
+  // ⚠️ 只认 [data-tab]：「连接设置」也是 nav.tabs 里的 button，别把它当成标签页
+  document.querySelectorAll("nav.tabs button[data-tab]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var tab = btn.dataset.tab;
+      document.querySelectorAll("nav.tabs button[data-tab]").forEach(function (b) {
+        b.classList.toggle("active", b === btn);
+      });
+      document.querySelectorAll(".tab-page").forEach(function (p) {
+        p.classList.toggle("active", p.id === "tab-" + tab);
+      });
+      current = tab;
+      if (!loaded[tab]) {
+        loaded[tab] = true;
+        if (tab === "proc") loadProcesses();
+        if (tab === "files") loadFiles($("fs-path").value);
+        if (tab === "reg") loadRegistry();
+      }
+    });
+  });
+
+  /* ================= 进程 ================= */
+  var procData = [];
+  var procSort = { k: "pid", asc: true };
+
+  function renderProcesses() {
+    var q = $("proc-q").value.trim().toLowerCase();
+    var rows = procData.filter(function (p) {
+      if (!q) return true;
+      return String(p.pid).toLowerCase().indexOf(q) >= 0 ||
+             String(p.name).toLowerCase().indexOf(q) >= 0 ||
+             String(p.cmd_line).toLowerCase().indexOf(q) >= 0 ||
+             String(p.owner).toLowerCase().indexOf(q) >= 0;
+    });
+    var k = procSort.k, asc = procSort.asc;
+    rows.sort(function (a, b) {
+      var x = a[k], y = b[k];
+      if (typeof x === "number" && typeof y === "number") return asc ? x - y : y - x;
+      x = String(x || "").toLowerCase(); y = String(y || "").toLowerCase();
+      return asc ? x.localeCompare(y) : y.localeCompare(x);
+    });
+    var tb = $("proc-body");
+    tb.textContent = "";
+    rows.forEach(function (p) {
+      var exited = p.exit_code !== null && p.exit_code !== undefined;
+      var tr = ce("tr");
+      if (exited) tr.className = "exited";
+      tr.appendChild(ce("td", p.pid, "num mono"));
+      tr.appendChild(ce("td", p.name, "name"));
+      tr.appendChild(ce("td", p.owner || "", "hide-sm"));
+      tr.appendChild(ce("td", p.cmd_line, "wrap"));
+      tr.appendChild(ce("td", fmtTime(p.started_at), "hide-sm mono"));
+      tr.appendChild(ce("td", exited ? "已退出 code=" + p.exit_code : "运行中"));
+      var tdAct = ce("td");
+      if (!exited) {
+        var b = ce("button", "终止", "sm danger");
+        b.addEventListener("click", function () {
+          if (!confirm("确认结束进程 PID " + p.pid + "（" + p.name + "）？\n未保存的数据会丢失。")) return;
+          b.disabled = true;
+          call("terminate_process", { pid: p.pid }).then(function () {
+            toast("已请求结束 PID " + p.pid);
+            loadProcesses();
+          }).catch(function (e) { toast(e.message, true); b.disabled = false; });
+        });
+        tdAct.appendChild(b);
+      }
+      tr.appendChild(tdAct);
+      tb.appendChild(tr);
+    });
+    if (!rows.length) tb.appendChild(ce("tr")).appendChild(
+      ce("td", procData.length ? "没有匹配的进程" : "未取到进程", "empty")
+    ).setAttribute("colspan", "7");
+    $("proc-status").textContent =
+      "共 " + procData.length + " 个进程" + (q ? "，筛选后 " + rows.length + " 个" : "");
+  }
+
+  function loadProcesses() {
+    var st = $("proc-status");
+    st.innerHTML = '<span class="spin"></span> 正在读取虚拟机进程…';
+    return call("list_processes").then(function (data) {
+      procData = data.processes || [];
+      renderProcesses();
+    }).catch(function (e) {
+      $("proc-body").textContent = "";
+      st.textContent = "";
+      $("proc-body").appendChild(ce("tr")).appendChild(
+        ce("td", "读取失败：" + e.message, "empty")
+      ).setAttribute("colspan", "7");
+    });
+  }
+  $("proc-refresh").addEventListener("click", loadProcesses);
+  // 三颗下拉：开之前先重画一遍，列表里才能反映"刚加/刚删的预设"
+  $("proc-start").addEventListener("click", function () {
+    var m = $("start-menu");
+    if (!m.classList.contains("open")) renderStartMenu();
+    toggleMenu(m);
+  });
+  $("proc-kill").addEventListener("click", function () {
+    var m = $("kill-menu");
+    if (!m.classList.contains("open")) renderKillMenu();
+    toggleMenu(m);
+  });
+  $("proc-auto").addEventListener("click", function () {
+    var m = $("auto-menu");
+    if (!m.classList.contains("open")) renderAutoMenu();
+    toggleMenu(m);
+  });
+  $("proc-q").addEventListener("input", renderProcesses);
+  document.querySelectorAll("#tab-proc th.sortable").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.dataset.k;
+      if (procSort.k === k) procSort.asc = !procSort.asc;
+      else { procSort.k = k; procSort.asc = true; }
+      renderProcesses();
+    });
+  });
+
+  /* 启动程序弹层（入口在「启动 ▾」菜单里的"自定义启动…"，见 renderStartMenu） */
+  var popStart = $("pop-start");
+  popStart.querySelectorAll("[data-close]").forEach(function (b) {
+    b.addEventListener("click", function () { popStart.classList.remove("open"); });
+  });
+  // 在这里填好的东西可以一键存成常用（进「启动 ▾」下拉），下次一点就走
+  $("st-save").addEventListener("click", function () {
+    var program = $("st-program").value.trim();
+    if (!program) { toast("先填程序路径", true); return; }
+    var base = program.split(/[\\\/]/).pop() || program;
+    var name = prompt("给这个程序取个名字：", base);
+    if (name === null) return;
+    name = String(name).trim() || base;
+    presetStore.start.push({
+      name: name, path: program,
+      args: $("st-args").value.trim(),
+      cwd: $("st-cwd").value.trim(),
+    });
+    presetSave();
+    renderStartMenu();
+    toast("已存为常用：" + name);
+  });
+  $("st-run").addEventListener("click", function () {
+    var program = $("st-program").value.trim();
+    if (!program) { toast("程序路径必填", true); return; }
+    var envVars = {};
+    $("st-env").value.split(/\r?\n/).forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      var i = line.indexOf("=");
+      if (i > 0) envVars[line.slice(0, i).trim()] = line.slice(i + 1);
+    });
+    var btn = this;
+    btn.disabled = true;
+    call("start_program", {
+      program_path: program,
+      arguments: $("st-args").value,
+      working_directory: $("st-cwd").value.trim(),
+      env_vars: Object.keys(envVars).length ? envVars : null,
+    }).then(function (data) {
+      toast("已启动，新进程 PID " + data.pid);
+      popStart.classList.remove("open");
+      $("st-args").value = ""; $("st-env").value = "";
+      loadProcesses();
+    }).catch(function (e) { toast(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  /* ================= 文件 ================= */
+  var fsCurrent = "C:\\";
+
+  function renderFiles(data) {
+    fsCurrent = data.path || fsCurrent;
+    $("fs-path").value = fsCurrent;
+    var tb = $("fs-body");
+    tb.textContent = "";
+    var files = (data.files || []).filter(function (f) {
+      return f.path !== "." && f.path !== "..";
+    });
+    files.sort(function (a, b) {
+      if ((a.type === "directory") !== (b.type === "directory")) {
+        return a.type === "directory" ? -1 : 1;
+      }
+      return String(a.path).toLowerCase().localeCompare(String(b.path).toLowerCase());
+    });
+    files.forEach(function (f) {
+      var isDir = f.type === "directory";
+      var tr = ce("tr");
+      tr.className = isDir ? "dir" : "";
+      var tdName = ce("td", (isDir ? "📁 " : "📄 ") + f.path, "name");
+      tr.appendChild(tdName);
+      tr.appendChild(ce("td", isDir ? "" : fmtSize(f.size), "num"));
+      tr.appendChild(ce("td", fmtTime(f.modified), "hide-sm mono"));
+      var tdAct = ce("td");
+      var full = joinPath(fsCurrent, f.path);
+      if (isDir) {
+        var enter = ce("button", "进入", "sm primary");
+        enter.addEventListener("click", function () { loadFiles(full); });
+        tdAct.appendChild(enter);
+        tr.addEventListener("dblclick", function () { loadFiles(full); });
+      } else {
+        var dl = ce("button", "下载", "sm");
+        dl.addEventListener("click", function () { downloadFile(full, f.path); });
+        tdAct.appendChild(dl);
+      }
+      var del = ce("button", "删除", "sm danger");
+      del.addEventListener("click", function () {
+        if (!confirm((isDir ? "确认删除目录（含全部内容）" : "确认删除文件") + "？\n" + full)) return;
+        call("remove_path", { path: full, recursive: true }).then(function () {
+          toast("已删除：" + f.path); loadFiles(fsCurrent);
+        }).catch(function (e) { toast(e.message, true); });
+      });
+      tdAct.appendChild(del);
+      tr.appendChild(tdAct);
+      tb.appendChild(tr);
+    });
+    if (!files.length) {
+      var tr = ce("tr"); var td = ce("td", "空目录", "empty");
+      td.setAttribute("colspan", "4"); tr.appendChild(td); tb.appendChild(tr);
+    }
+    $("fs-status").textContent = data.truncated
+      ? "条目过多，仅显示前 " + files.length + " 项"
+      : files.length + " 个条目";
+  }
+
+  function loadFiles(path) {
+    var target = (path || $("fs-path").value || "C:\\").trim();
+    var st = $("fs-status");
+    st.innerHTML = '<span class="spin"></span> 正在列目录…';
+    return call("list_files", { path: target, max_results: 500 })
+      .then(renderFiles)
+      .catch(function (e) {
+        $("fs-body").textContent = "";
+        st.textContent = "";
+        var tr = ce("tr"); var td = ce("td", "读取失败：" + e.message, "empty");
+        td.setAttribute("colspan", "4"); tr.appendChild(td); $("fs-body").appendChild(tr);
+      });
+  }
+  $("fs-refresh").addEventListener("click", function () { loadFiles(fsCurrent); });
+  $("fs-up").addEventListener("click", function () { loadFiles(parentPath(fsCurrent)); });
+  $("fs-go").addEventListener("click", function () { loadFiles($("fs-path").value); });
+  $("fs-fav").addEventListener("click", function () {
+    var m = $("fav-menu");
+    if (!m.classList.contains("open")) renderFavMenu();
+    toggleMenu(m);
+  });
+  $("fs-path").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") loadFiles(this.value);
+  });
+  $("fs-mkdir").addEventListener("click", function () {
+    var name = prompt("在 " + fsCurrent + " 下新建目录，名称：");
+    if (!name) return;
+    name = name.trim();
+    if (/[\\\/]/.test(name)) { toast("目录名不能包含 \\ 或 /", true); return; }
+    call("make_directory", { path: joinPath(fsCurrent, name), create_parents: true })
+      .then(function () { toast("已创建：" + name); loadFiles(fsCurrent); })
+      .catch(function (e) { toast(e.message, true); });
+  });
+
+  /* 上传（裸字节 POST；受 HA 16MB 请求体限制） */
+  $("fs-upload").addEventListener("click", function () { $("fs-input").click(); });
+  $("fs-input").addEventListener("change", function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    if (!files.length) return;
+    var oversize = files.filter(function (f) { return f.size > UPLOAD_LIMIT; });
+    if (oversize.length) {
+      toast("单文件不能超过 " + Math.round(UPLOAD_LIMIT / 1048576) + "MB：" +
+            oversize.map(function (f) { return f.name; }).join(", "), true);
+      this.value = "";
+      return;
+    }
+    uploadQueue(files, 0);
+    this.value = "";
+  });
+  function uploadQueue(files, idx) {
+    if (idx >= files.length) { loadFiles(fsCurrent); return; }
+    var f = files[idx];
+    var guestPath = joinPath(fsCurrent, f.name);
+    $("fs-status").innerHTML =
+      "正在上传 " + (idx + 1) + "/" + files.length + "：" + f.name +
+      ' <span class="hint">(' + fmtSize(f.size) + ")</span>" +
+      '<div class="progress"><div id="up-bar"></div></div>';
+    call("sign_upload", { guest_path: guestPath, overwrite: true })
+      .then(function (sig) {
+        return new Promise(function (resolve, reject) {
+          var xhr = new XMLHttpRequest();
+          xhr.open("POST", sig.url);
+          xhr.upload.onprogress = function (ev) {
+            if (ev.lengthComputable) {
+              var bar = $("up-bar");
+              if (bar) bar.style.width = (ev.loaded / ev.total * 100).toFixed(1) + "%";
+            }
+          };
+          xhr.onload = function () {
+            var data = {};
+            try { data = JSON.parse(xhr.responseText); } catch (e) {}
+            if (xhr.status >= 200 && xhr.status < 300 && data.ok) resolve();
+            else reject(new Error(data.error || ("HTTP " + xhr.status)));
+          };
+          xhr.onerror = function () { reject(new Error("网络错误，上传中断")); };
+          xhr.send(f);
+        });
+      })
+      .then(function () {
+        toast("已上传：" + f.name);
+        uploadQueue(files, idx + 1);
+      })
+      .catch(function (e) {
+        toast("上传 " + f.name + " 失败：" + e.message, true);
+        $("fs-status").textContent = "上传已中断";
+      });
+  }
+
+  function downloadFile(full, name) {
+    $("fs-status").innerHTML = '<span class="spin"></span> 正在从虚拟机取回 ' + name + "…";
+    call("sign_download", { guest_path: full }).then(function (sig) {
+      var a = ce("a");
+      a.href = sig.url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      $("fs-status").textContent = "下载已开始：" + name;
+    }).catch(function (e) { toast(e.message, true); $("fs-status").textContent = ""; });
+  }
+
+  /* ================= 注册表 ================= */
+  function regValText(v) {
+    if (v === null || v === undefined) return "";
+    if (Array.isArray(v)) return v.join(" | ");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
+  function loadRegistry() {
+    var key = $("reg-key").value.trim();
+    if (!key) { toast("请输入注册表键路径", true); return; }
+    var recursive = $("reg-recursive").checked;
+    var st = $("reg-status");
+    st.innerHTML = '<span class="spin"></span> 正在查询注册表…';
+    $("reg-keys").textContent = ""; $("reg-vals").textContent = "";
+    call("list_registry", { key_path: key, recursive: recursive })
+      .then(function (data) {
+        var ktb = $("reg-keys");
+        ktb.textContent = "";
+        (data.keys || []).forEach(function (rec) {
+          var tr = ce("tr");
+          var td = ce("td", rec.error ? "🔇 " + rec.path + "（" + rec.error + "）" : rec.path);
+          if (rec.error) td.style.color = "var(--warn)";
+          tr.appendChild(td);
+          if (!rec.error) {
+            tr.style.cursor = "pointer";
+            tr.addEventListener("click", function () { $("reg-key").value = rec.path; loadRegistry(); });
+          }
+          ktb.appendChild(tr);
+        });
+        if (!ktb.children.length) ktb.appendChild(ce("tr")).appendChild(
+          ce("td", "无子键", "empty"));
+
+        var vtb = $("reg-vals");
+        vtb.textContent = "";
+        (data.values || []).forEach(function (v) {
+          var tr = ce("tr");
+          tr.appendChild(ce("td", v.name || "(默认)"));
+          tr.appendChild(ce("td", v.type, "mono"));
+          tr.appendChild(ce("td", regValText(v.value), "wrap"));
+          vtb.appendChild(tr);
+        });
+        if (!vtb.children.length) vtb.appendChild(ce("tr")).appendChild(
+          ce("td", "无值", "empty")).setAttribute("colspan", "3");
+        st.textContent = "键：" + (data.key_count || 0) +
+          "，值：" + (data.value_count || 0) +
+          ((data.unreadable_keys || 0) ? "，不可读子键：" + data.unreadable_keys : "");
+      })
+      .catch(function (e) {
+        st.textContent = "";
+        var tr = ce("tr"); var td = ce("td", "查询失败：" + e.message, "empty");
+        td.setAttribute("colspan", "3"); tr.appendChild(td); $("reg-vals").appendChild(tr);
+      });
+  }
+  $("reg-query").addEventListener("click", loadRegistry);
+  $("reg-key").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") loadRegistry();
+  });
+  $("reg-fav").addEventListener("click", function () {
+    var m = $("reg-menu");
+    if (!m.classList.contains("open")) renderRegMenu();
+    toggleMenu(m);
+  });
+
+  /* ================= 连接设置（通道 / SSH / 主机指纹） ================= */
+  var channel = "tools";          // 当前实际走哪条通道：tools / ssh
+  var useLinux = false;           // 走 SSH 时按 Linux 处理（预设换成 /etc、/var/log 那套）
+  var connInfo = null;            // 最近一次 get_conn 的结果（填表单 / 判断哪块展开用）
+
+  function channelLabel(name) {
+    return name === "ssh" ? "SSH" : "VMware Tools";
+  }
+
+  /* ---- 通道三段式按钮 ---- */
+  function setTransport(value) {
+    document.querySelectorAll("#conn-seg button").forEach(function (btn) {
+      btn.classList.toggle("on", btn.dataset.transport === value);
+    });
+  }
+  function getTransport() {
+    var btn = document.querySelector("#conn-seg button.on");
+    return btn ? btn.dataset.transport : "auto";
+  }
+
+  /* ---- 两张通道卡片 ----
+     蓝色高亮跟着"你选的那条"走（点了立刻有反馈），右上小徽标说的是"实际在用的是哪条"
+     —— 把"准备保存的意图"和"当前生效的通道"分开表达，不会看混。 */
+  function setCardState(cardId, stateId, configured, highlighted, inUse) {
+    var card = $(cardId), chip = $(stateId);
+    card.classList.toggle("active", !!highlighted);
+    card.classList.toggle("configured", !!configured);
+    if (inUse) { chip.textContent = "当前使用"; chip.className = "chip on"; }
+    else if (configured) { chip.textContent = "已配置"; chip.className = "chip ok"; }
+    else { chip.textContent = "未配置"; chip.className = "chip"; }
+  }
+
+  // intent: "auto" / "tools" / "ssh"，不传就按实际生效的通道高亮
+  function refreshCards(intent) {
+    var info = connInfo || { resolved: "tools", ssh: {}, tools: {} };
+    var sshOn = intent === "ssh" || (intent !== "tools" && info.resolved === "ssh");
+    var toolsOn = intent === "tools" || (intent !== "ssh" && info.resolved === "tools");
+    setCardState("conn-ssh-card", "conn-ssh-state",
+      !!(info.ssh && info.ssh.username), sshOn, info.resolved === "ssh");
+    setCardState("conn-tools-card", "conn-tools-state",
+      !!(info.tools && (info.tools.username || info.tools.has_password)),
+      toolsOn, info.resolved === "tools");
+  }
+
+  /* ---- 显式选了某条通道，就只显示那一条；只有「自动」才两条都摆出来 ----
+     ⚠️ 隐藏用 CSS（display:none），**不删 DOM**：另一条通道已保存的账号密码还躺在
+     输入框里，保存时会原样带回去，不会因为"看不见"就被清空。 */
+  function updateSshWarning(intent) {
+    var warn = $("conn-ssh-warn");
+    var emptyUser = !$("conn-ssh-user").value.trim();
+    warn.style.display = (intent === "ssh" && emptyUser) ? "" : "none";
+  }
+
+  function applyChannelCards(intent) {
+    var want = (intent === undefined || intent === null) ? getTransport() : intent;
+    $("conn-ssh-card").style.display = want === "tools" ? "none" : "";
+    $("conn-tools-card").style.display = want === "ssh" ? "none" : "";
+    refreshCards(want);
+    updateSshWarning(want);
+  }
+
+  function setTestChip(state, text) {
+    var chip = $("conn-test-chip");
+    chip.textContent = text;
+    chip.className = "chip" + (state === "ok" ? " ok" : state === "bad" ? " bad" : "");
+  }
+
+  // 关掉「校验主机指纹」后，已记录的那枚指纹当前不生效（重新勾上才用），压暗提示
+  function refreshVerifyHint() {
+    $("conn-fp-row").classList.toggle("off", !$("conn-ssh-verify").checked);
+  }
+
+  /* 上报的 IP 一键填入：
+     · 没上报就不显示按钮；
+     · 输入框里已经就是它 → 按钮变「已使用」并置灰（免得重复点）。 */
+  function refreshAutoHostHint() {
+    var ip = (connInfo && connInfo.auto_host) || "";
+    var btn = $("conn-use-auto");
+    btn.style.display = ip ? "" : "none";
+    var used = !!ip && $("conn-ssh-host").value.trim() === ip;
+    btn.textContent = used ? "已使用" : "填入";
+    btn.disabled = used;
+  }
+
+  function fillConn(d) {
+    connInfo = d;
+    $("conn-vm-name").textContent = d.vm_name;
+    $("conn-guest-os").textContent = d.guest_os || "";
+    var chip = $("conn-chip");
+    chip.textContent = "当前通道：" + channelLabel(d.resolved);
+    chip.className = "chip" + (d.resolved === "ssh" ? " on" : "");
+    setTransport(d.transport || "auto");
+
+    $("conn-ssh-host").value = d.ssh.host || "";
+    $("conn-ssh-port").value = d.ssh.port || 22;
+    $("conn-ssh-user").value = d.ssh.username || "";
+    $("conn-ssh-pass").value = "";
+    $("conn-ssh-pass").placeholder = d.ssh.has_password ? "已保存，留空表示不变" : "还没设置";
+    $("conn-ssh-verify").checked = d.ssh.verify !== false;
+    $("conn-tools-user").value = d.tools.username || "";
+    $("conn-tools-pass").value = "";
+    $("conn-tools-pass").placeholder = d.tools.has_password ? "已保存，留空表示不变" : "还没设置";
+    $("conn-tools-domain").value = d.tools.domain || "";
+    $("conn-auto-host").textContent = d.auto_host
+      ? "虚拟机当前上报的 IP：" + d.auto_host
+      : "虚拟机没有上报 IP（没装 VMware Tools 时拿不到），建议手动填 IP 或主机名";
+    refreshAutoHostHint();
+    var hasFp = !!d.ssh.fingerprint;
+    var fpEl = $("conn-fp");
+    fpEl.textContent = hasFp ? "已记录 " + d.ssh.fingerprint : "尚未记录指纹";
+    fpEl.title = hasFp ? d.ssh.fingerprint : "";       // 长指纹鼠标悬停能看全
+    fpEl.classList.toggle("plain", !hasFp);
+    $("conn-fp-clear").style.display = hasFp ? "" : "none";
+    refreshVerifyHint();                                // 关掉校验时把指纹压暗
+    // 什么都没配的时候，没必要摆一个「删除凭据」出来
+    var anyCred = !!(d.ssh.username || d.tools.username || d.tools.has_password);
+    $("conn-remove").style.display = anyCred ? "" : "none";
+    setTestChip("", "未测试");
+    $("conn-test-msg").textContent = "";
+    applyChannelCards();
+  }
+
+  function loadConn() {
+    return call("get_conn").then(function (d) { fillConn(d); return d; });
+  }
+
+  function openConnDialog() {
+    loadConn().then(function () {
+      $("pop-conn").classList.add("open");
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function tabButton(tab) {
+    return document.querySelector('nav.tabs button[data-tab="' + tab + '"]');
+  }
+  function setTabVisible(tab, visible) {
+    var btn = tabButton(tab);
+    if (btn) btn.style.display = visible ? "" : "none";
+  }
+
+  // 通道决定哪些标签页存在：
+  //   注册表 —— 只有 Windows + VMware Tools 有（SSH 通道没有注册表）
+  //   终端   —— 只有 SSH 有（VMware Tools 拿不到命令输出）
+  function applyChannel(resolved) {
+    channel = resolved === "ssh" ? "ssh" : "tools";
+    useLinux = channel === "ssh";
+    badgeState = "";      // 通道换了，之前那个"有效"的结论要重新确认
+    setTabVisible("reg", channel !== "ssh");
+    setTabVisible("exec", channel === "ssh");
+    var btn = tabButton(current);
+    if (btn && btn.style.display === "none") {
+      var procTab = tabButton("proc");
+      if (procTab) procTab.click();
+    }
+    // SSH 通道基本是 Linux：默认路径别停在 Windows 的 C:\（用户改过就不动它）
+    if (channel === "ssh" && !loaded.files && fsCurrent === "C:\\") {
+      fsCurrent = "/";
+      $("fs-path").value = "/";
+    }
+  }
+
+  function connSshPayload() {
+    return {
+      host: $("conn-ssh-host").value.trim(),
+      port: $("conn-ssh-port").value.trim() || 22,
+      username: $("conn-ssh-user").value.trim(),
+      password: $("conn-ssh-pass").value,
+      verify: $("conn-ssh-verify").checked
+    };
+  }
+
+  // 入口就是那枚凭据徽标（标题栏右端）：独立打开时点它，嵌入时由控制台转发消息
+  $("cred-badge").addEventListener("click", openConnDialog);
+  $("pop-conn").querySelectorAll("[data-close]").forEach(function (b) {
+    b.addEventListener("click", function () { $("pop-conn").classList.remove("open"); });
+  });
+  $("pop-conn").addEventListener("click", function (e) {
+    if (e.target === this) this.classList.remove("open");
+  });
+  // 换通道：显式选一条就只留那张卡（自动 = 两张都显示），保存时才落库
+  $("conn-seg").addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest("button[data-transport]") : null;
+    if (!btn) return;
+    setTransport(btn.dataset.transport);
+    applyChannelCards(btn.dataset.transport);
+  });
+  // 一填上用户名，"会退回 VMware Tools"的提醒立刻收掉
+  $("conn-ssh-user").addEventListener("input", function () {
+    updateSshWarning(getTransport());
+  });
+  // 勾/去勾「校验主机指纹」：指纹那行跟着亮/暗
+  $("conn-ssh-verify").addEventListener("change", refreshVerifyHint);
+  // 一键填入虚拟机上报的 IP
+  $("conn-use-auto").addEventListener("click", function () {
+    var ip = (connInfo && connInfo.auto_host) || "";
+    if (!ip) { toast("虚拟机当前没有上报 IP", true); return; }
+    $("conn-ssh-host").value = ip;
+    refreshAutoHostHint();
+    toast("已填入上报的 IP：" + ip);
+  });
+  // 手改输入框时，"填入 / 已使用"按钮状态跟着变
+  $("conn-ssh-host").addEventListener("input", refreshAutoHostHint);
+
+  $("conn-test").addEventListener("click", function () {
+    var btn = this, msg = $("conn-test-msg");
+    msg.style.color = "var(--muted)";
+    msg.textContent = "正在连接…";
+    setTestChip("", "测试中…");
+    btn.disabled = true;
+    call("test_conn", { ssh: connSshPayload() }).then(function (r) {
+      if (r.ok) {
+        setTestChip("ok", "连接成功");
+        msg.style.color = "var(--ok)";
+        msg.textContent = r.host + ":" + r.port +
+          (r.first_seen ? "（已记录主机指纹）" : "");
+        loadConn();          // 指纹显示刷新一下
+      } else {
+        setTestChip("bad", "连接失败");
+        msg.style.color = "var(--danger)";
+        msg.textContent = r.error || "连接失败";
+      }
+    }).catch(function (e) {
+      setTestChip("bad", "连接失败");
+      msg.style.color = "var(--danger)";
+      msg.textContent = e.message;
+    }).then(function () { btn.disabled = false; });
+  });
+
+  $("conn-fp-clear").addEventListener("click", function () {
+    if (!confirm("清除已记录的主机指纹？\n下次连接会重新记录（首次信任）。\n"
+      + "只在确认这台机器确实换过 / 重装过之后才需要清除。")) return;
+    call("forget_hostkey").then(function () {
+      toast("已清除主机指纹");
+      loadConn();
+    }).catch(function (e) { toast(e.message, true); });
+  });
+
+  $("conn-save").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    call("set_conn", {
+      transport: getTransport(),
+      ssh: connSshPayload(),
+      tools: {
+        username: $("conn-tools-user").value.trim(),
+        password: $("conn-tools-pass").value,
+        domain: $("conn-tools-domain").value.trim()
+      }
+    }).then(function (d) {
+      $("pop-conn").classList.remove("open");
+      toast("已保存，当前通道：" + channelLabel(d.resolved));
+      applyChannel(d.resolved);
+      // 通道可能换了：已加载的表格数据按新通道重取一遍
+      loaded.proc = false; loaded.files = false; loaded.reg = false;
+      if (current === "files") { loaded.files = true; loadFiles(fsCurrent); }
+      else { loaded.proc = true; loadProcesses(); }
+      return refreshCredBadge();
+    }).catch(function (e) { toast(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  /* ================= 终端（执行命令，仅 SSH 通道） ================= */
+  var LAST_CMD_KEY = "esxi-guest-last-cmd";
+  var execBusy = false;
+
+  function execBlock(cmd, out, err, code) {
+    var box = $("exec-out");
+    var hint = box.querySelector(".empty");
+    if (hint) hint.remove();
+    var block = ce("div", null, "exec-block");
+    block.appendChild(ce("div", cmd, "exec-line"));
+    if (out) block.appendChild(ce("div", out, "exec-pre"));
+    if (err) block.appendChild(ce("div", err, "exec-pre exec-err"));
+    if (!out && !err) block.appendChild(ce("div", "（没有输出）", "exec-pre"));
+    if (code !== null && code !== undefined) {
+      block.appendChild(ce("div", "退出码：" + code, "exec-meta"));
+    }
+    box.appendChild(block);
+    while (box.children.length > 20) box.removeChild(box.firstChild);  // 别让 DOM 无限长
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function runCommand(cmd) {
+    cmd = String(cmd || "").trim();
+    if (!cmd || execBusy) return;
+    execBusy = true;
+    $("exec-run").disabled = true;
+    $("exec-cmd").value = cmd;
+    $("exec-status").innerHTML = '<span class="spin"></span> 正在执行：' + cmd;
+    try { window.localStorage.setItem(LAST_CMD_KEY, cmd); } catch (e) { /* 忽略 */ }
+    call("exec", { command: cmd }).then(function (r) {
+      execBlock(cmd, r.stdout || "", r.stderr || "", r.exit_status);
+      $("exec-status").textContent = "退出码 " + r.exit_status +
+        (r.truncated ? "（输出过长已截断）" : "");
+    }).catch(function (e) {
+      execBlock(cmd, "", e.message, null);
+      $("exec-status").textContent = "执行失败";
+    }).then(function () {
+      execBusy = false;
+      $("exec-run").disabled = false;
+    });
+  }
+
+  $("exec-run").addEventListener("click", function () { runCommand($("exec-cmd").value); });
+  $("exec-cmd").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); runCommand(this.value); }
+  });
+  $("exec-fav").addEventListener("click", function () {
+    var m = $("exec-menu");
+    if (!m.classList.contains("open")) renderExecMenu();
+    toggleMenu(m);
+  });
+  try { $("exec-cmd").value = window.localStorage.getItem(LAST_CMD_KEY) || ""; }
+  catch (e) { /* 隐私模式：不恢复上次的命令而已 */ }
+
+  /* ---------------- 凭据状态 + 初始加载 ---------------- */
+  var badgeState = "";        // "ok" / "bad" / "off"（未配置或未知）/ ""
+
+  //: 徽标三态：ok（绿）/ bad（红）/ ""（灰，未配置）—— 嵌在抽屉里时同步给标题栏
+  function setBadge(text, cls) {
+    var b = $("cred-badge");
+    b.textContent = text;
+    b.className = cls || "";
+    postCred(cls === "ok" ? "ok" : (cls === "bad" ? "bad" : "pending"), text);
+  }
+
+  function setBadgeState(state, text) {
+    badgeState = state;
+    setBadge(text, state === "ok" ? "ok" : (state === "bad" ? "bad" : ""));
+  }
+
+  /* 真正跑通一次操作（列进程 / 列目录 / 跑命令……）就说明通道是通的 —— 哪怕之前
+     那次"凭据校验"失败过，也把徽标改回有效。
+     ⚠️ 这是"文件明明能看、徽标却挂着凭据无效"的根治办法：以实际操作为准，
+        而不是以某一次探测为准。 */
+  function markChannelOk() {
+    if (badgeState === "ok") return;
+    setBadgeState("ok", "凭据有效 · " + channelLabel(channel));
+  }
+
+  function refreshCredBadge() {
+    return call("validate").then(function (r) {
+      var label = channelLabel(r.transport || channel);
+      if (r.ok) {
+        setBadgeState("ok", "凭据有效 · " + label);
+      } else if (r.unconfigured) {
+        // 还没配 / 通道没配全：灰徽标，这不是故障
+        setBadgeState("off", "未配置凭据");
+      } else {
+        setBadgeState("bad", "凭据无效 · " + label);
+        toast("凭据校验未通过：" + (r.error || ""), true);
+      }
+      return r;
+    }).catch(function (e) {
+      // 请求本身没拿到结论（网络中断 / 服务端异常）：说"未知"，别吓人，
+      //   后面的实际操作一旦成功会自动把它点亮
+      if (e && e.status === 409) {
+        setBadgeState("off", "未配置凭据");
+        return;
+      }
+      setBadgeState("off", "凭据状态未知");
+      toast("校验请求失败：" + e.message, true);
+    });
+  }
+
+  /* 删掉凭据之后把页面收拾干净：徽标回到"未配置"、两张表清空、轮询停掉
+     （没有凭据时轮询只会一直失败，把浏览器控制台刷满 409） */
+  function clearGuestUi() {
+    setAutoSec(0);
+    setBadgeState("off", "未配置凭据");
+    procData = [];
+    ["proc-body", "fs-body", "reg-vals"].forEach(function (id) {
+      var tb = $(id);
+      if (tb) tb.textContent = "";
+    });
+    // 表格给一句中性提示，别留个空白在那儿让人以为坏了
+    var hint = "未配置凭据：点右上角那枚凭据徽标可以打开「连接设置」";
+    [["proc-body", 7], ["fs-body", 4]].forEach(function (spec) {
+      var tr = ce("tr");
+      var td = ce("td", hint, "empty");
+      td.setAttribute("colspan", spec[1]);
+      tr.appendChild(td);
+      $(spec[0]).appendChild(tr);
+    });
+    ["proc-status", "fs-status", "reg-status"].forEach(function (id) {
+      $(id).textContent = "";
+    });
+    var out = $("exec-out");
+    out.textContent = "";
+    out.appendChild(ce("div", "已删除凭据。填好「连接设置」后可以继续使用。", "empty"));
+    loaded.proc = false; loaded.files = false; loaded.reg = false;
+  }
+
+  $("conn-remove").addEventListener("click", function () {
+    if (!confirm("删除这台虚拟机的全部连接配置？\n"
+      + "SSH 与 VMware Tools 两条通道的账号密码都会被清掉，删除后需要重新填写才能再连。")) {
+      return;
+    }
+    var btn = this;
+    btn.disabled = true;
+    call("remove_conn").then(function () {
+      $("pop-conn").classList.remove("open");
+      toast("已删除连接配置");
+      clearGuestUi();
+      return loadConn();          // 弹窗里的表单跟着清空
+    }).catch(function (e) { toast(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  // 先问一次连接设置：拿到当前通道（决定注册表 tab 显不显示），顺便把弹窗填好缓存
+  call("get_conn").then(function (d) {
+    fillConn(d);
+    applyChannel(d.resolved);
+  }).catch(function () { /* 取不到就按 VMware Tools 处理，不影响其余功能 */ });
+
+  // 预设（出厂 + 用户自己写的）从 localStorage 读出来，四个下拉第一次点开就是全的；
+  // setAutoSec 顺带恢复上次选的自动刷新间隔并写好按钮文案
+  presetLoad();
+  setAutoSec(autoSec);
+  refreshPresetMenus();
+  refreshCredBadge();
+  loadProcesses();
+})();
+</script>
+</body>
+</html>
