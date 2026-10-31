@@ -34,6 +34,19 @@ _LOGGER = logging.getLogger(__name__)
 #: 全局串行锁：pyvmomi 在同进程里开第二个连接可能导致整个进程静默退出
 _LOCK = threading.RLock()
 
+#: 虚拟机清单缓存（TTL 秒）。管理页每次打开、定时轮询、多标签页都会拉全量
+#: 硬件清单（连 ESXi + 遍历每台 VM 的全部设备），VM 多时要好几秒；而清单的
+#: 消费场景（列表展示 / 新建 / 编辑）并不要求每次都是实时数据，所以按主机
+#: 缓存一小段时间。写操作（创建 / 删除 / 改配）成功后由视图层调用
+#: :func:`invalidate_inventory` 主动失效，保证操作后立刻看到最新清单。
+_INVENTORY_TTL = 60.0
+_INVENTORY_CACHE = {}  # {(host, port, user, host_name): (过期时刻, 数据)}
+
+#: 数据存储目录树缓存（TTL 秒）。SearchDatastoreSubFolders_Task 是递归任务，
+#: 大存储一次要数秒；目录树短时间内不会变，缓存后进入任意层级都是本地查表。
+_DS_TREE_TTL = 300.0
+_DS_TREE_CACHE = {}  # {(host, port, user, host_name, ds_name): (过期时刻, 树)}
+
 #: 免费 Hypervisor 的每 VM vCPU 上限（6.5 免费版 8 vCPU；eval 模式不受限，
 #: 这里取主机线程数与 8 的较小值只是保守的 UI 校验，ESXi 自身仍会再裁一次）
 _FREE_VCPU_LIMIT = 8
@@ -283,16 +296,29 @@ def _new_scsi(kind, bus_number, key):
     return ctrl
 
 
-def _new_ide_and_cdrom():
-    """新建 VM 默认带一个客户端介质光驱（和 host client 新建向导一致）。"""
+def _new_ide_and_cdrom(iso=None):
+    """新建 VM 默认带一个客户端介质光驱（和 host client 新建向导一致）。
+
+    ``iso`` 为 ``(ds_name, ds_path)`` 元组时，光驱直接挂载该镜像并设为
+    「已连接 / 开机连接」（供「创建虚拟机时挂载 ISO」使用）。
+    """
     ide = vim.vm.device.VirtualIDEController(key=_IDE_KEY, busNumber=0)
     cdrom = vim.vm.device.VirtualCdrom(key=_CDROM_KEY, controllerKey=_IDE_KEY,
                                       unitNumber=0)
-    cdrom.backing = (
-        vim.vm.device.VirtualCdrom.RemotePassthroughBackingInfo(deviceName=""))
-    cdrom.connectable = (
-        vim.vm.device.VirtualDevice.ConnectInfo(
-            connected=False, startConnected=False, allowGuestControl=True))
+    if iso:
+        ds_name, ds_path = iso
+        cdrom.backing = vim.vm.device.VirtualCdrom.IsoBackingInfo(
+            fileName=f"[{ds_name}] {ds_path}")
+        cdrom.connectable = (
+            vim.vm.device.VirtualDevice.ConnectInfo(
+                connected=True, startConnected=True, allowGuestControl=True,
+                status="ok"))
+    else:
+        cdrom.backing = (
+            vim.vm.device.VirtualCdrom.RemotePassthroughBackingInfo(deviceName=""))
+        cdrom.connectable = (
+            vim.vm.device.VirtualDevice.ConnectInfo(
+                connected=False, startConnected=False, allowGuestControl=True))
     return [
         _devspec(ide, vim.vm.device.VirtualDeviceSpec.Operation.add),
         _devspec(cdrom, vim.vm.device.VirtualDeviceSpec.Operation.add),
@@ -302,8 +328,76 @@ def _new_ide_and_cdrom():
 # --------------------------------------------------------------------------- #
 # 清单 / 资源
 # ---------------------------------------------------------------------------
+def _parse_iso_param(params, host):
+    """把 params['iso'] 归一成 ``(ds_name, ds_path)``；未提供返回 None。
+
+    接受 ``{"ds": 存储名, "path": 目录/文件.iso}``（网页浏览器的选择结果），
+    也接受完整串 ``"[datastore1] 目录/文件.iso"``（服务调用便捷形式）。
+    存储必须在本机存在且可访问，文件必须以 .iso 结尾。
+    """
+    iso = params.get("iso")
+    if not iso:
+        return None
+    if isinstance(iso, str):
+        ds_name, ds_path = _parse_ds_path(iso)
+        if not ds_name or not ds_path:
+            raise RuntimeError(
+                "ISO 路径格式不正确，应为 [存储名] 目录/文件.iso")
+        ds_path = ds_path.strip("/")
+    else:
+        ds_name = str(iso.get("ds") or "").strip()
+        ds_path = str(iso.get("path") or "").strip().strip("/")
+    if not ds_name or not ds_path:
+        raise RuntimeError("ISO 挂载参数不完整（需要 ds 与 path）")
+    if not ds_path.lower().endswith(".iso"):
+        raise RuntimeError("所选文件不是 ISO 镜像（需以 .iso 结尾）")
+    if _find_datastore(host, ds_name) is None:
+        raise RuntimeError(f"ISO 所在的数据存储 {ds_name} 不存在或不可访问")
+    return ds_name, ds_path
+
+
+def _inventory_key(conn_details, host_name=None):
+    """缓存键：同一条目同主机共用一个键（密码不参与，避免明文入键）。"""
+    return (
+        conn_details.get("host"),
+        conn_details.get("port"),
+        conn_details.get("user"),
+        host_name,
+    )
+
+
+def invalidate_inventory(conn_details, host_name=None):
+    """写操作成功后调用：丢弃该主机（或整条连接）的清单缓存。
+
+    ``host_name`` 为空表示整台 ESXi（多主机条目的批量任务不知道落在哪台）；
+    单机操作传入具体主机键。目录树缓存一并失效（新建/删除会改动存储内容）。
+    """
+    with _LOCK:
+        prefix = _inventory_key(conn_details, None)[:3]
+        for key in [k for k in _INVENTORY_CACHE if k[:3] == prefix]:
+            del _INVENTORY_CACHE[key]
+        for key in [k for k in _DS_TREE_CACHE if k[:3] == prefix]:
+            del _DS_TREE_CACHE[key]
+
+
 def get_inventory(conn_details, host_name=None):
-    """供管理页一次拉全：主机资源、数据存储、端口组、全部 VM 的完整硬件清单。"""
+    """供管理页一次拉全：主机资源、数据存储、端口组、全部 VM 的完整硬件清单。
+
+    带 TTL 缓存（见 ``_INVENTORY_TTL``）：未命中缓存才真正连 ESXi 遍历；
+    命中则直接返回上次的结果。管理页打开/轮询/多标签页因此不会反复全量拉取。
+    """
+    key = _inventory_key(conn_details, host_name)
+    with _LOCK:
+        hit = _INVENTORY_CACHE.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
+    data = _get_inventory_uncached(conn_details, host_name)
+    with _LOCK:
+        _INVENTORY_CACHE[key] = (time.monotonic() + _INVENTORY_TTL, data)
+    return data
+
+
+def _get_inventory_uncached(conn_details, host_name=None):
     with _session(conn_details) as (_, content):
         host = _get_host(content, host_name)
         datastores = []
@@ -346,6 +440,7 @@ def get_inventory(conn_details, host_name=None):
             "host": {
                 "name": host.summary.config.name,
                 "version": host.summary.config.product.fullName,
+                "address": conn_details.get("host") or "",
                 "cpu_threads": host.hardware.cpuInfo.numCpuThreads,
                 "mem_total_gb": round(host_mem_total / 1073741824, 1),
                 "mem_free_gb": round(
@@ -459,7 +554,7 @@ def create_vm(conn_details, params, host_name=None):
 
     params 字段：name / guest_id / cpu / memory_mb / firmware / datastore /
     disk_size_gb / provisioning(thin|thick) / network(可空) / nic_adapter /
-    scsi
+    scsi / iso(可空，{"ds","path"} 或 "[ds] path"，创建时挂载到虚拟光驱)
     """
     name = str(params["name"]).strip()
     ds_name = str(params["datastore"]).strip()
@@ -476,12 +571,13 @@ def create_vm(conn_details, params, host_name=None):
         network_obj = _find_network(host, network_name) if network_name else None
         if network_name and network_obj is None:
             raise RuntimeError(f"找不到端口组 {network_name}")
+        iso = _parse_iso_param(params, host)
 
         cpu = max(1, int(params.get("cpu") or 1))
         cpu = min(cpu, host.hardware.cpuInfo.numCpuThreads, _FREE_VCPU_LIMIT)
         mem_mb = max(4, int(params.get("memory_mb") or 512))
 
-        changes = _new_ide_and_cdrom()
+        changes = _new_ide_and_cdrom(iso)
         scsi_kind = params.get("scsi") or "lsilogic"
         changes.append(_devspec(
             _new_scsi(scsi_kind, 0, _SCSI_KEY_BASE),
@@ -510,6 +606,9 @@ def create_vm(conn_details, params, host_name=None):
         dc = _get_datacenter(content)
         _LOGGER.info("创建虚拟机 %s（%s, %s vCPU, %sMB, 磁盘 %sGB）",
                      name, ds_name, cpu, mem_mb, size_gb)
+        if iso:
+            _LOGGER.info("虚拟机 %s 创建时挂载 ISO：[%s] %s",
+                         name, iso[0], iso[1])
         task = dc.vmFolder.CreateVM_Task(
             config=spec, pool=host.parent.resourcePool, host=host)
         _wait_task(task, f"创建虚拟机 {name}", timeout=600)
@@ -524,7 +623,8 @@ def create_from_profile(conn_details, params, host_name=None):
 
     params: name / src_moid / disk_source(new|clone|attach) /
             datastore(目标存储) / disk_size_gb(new 时可覆盖容量) /
-            src_disk_key(attach 时选择母盘，缺省第一块)
+            src_disk_key(attach 时选择母盘，缺省第一块) /
+            iso(可空，{"ds","path"} 或 "[ds] path"，创建时挂载到虚拟光驱)
     """
     name = str(params["name"]).strip()
     source = params.get("disk_source", "new")
@@ -535,6 +635,7 @@ def create_from_profile(conn_details, params, host_name=None):
         dc = _get_datacenter(content)
         src_vm = _find_vm(content, params["src_moid"])
         src_cfg = src_vm.config
+        iso = _parse_iso_param(params, host)
         target_ds = str(params.get("datastore") or "").strip()
         if not target_ds:
             # 默认落到源 VM 所在存储
@@ -549,7 +650,7 @@ def create_from_profile(conn_details, params, host_name=None):
             raise RuntimeError("样板虚拟机没有硬盘")
         # 控制器：old_key → (kind, bus, new_key)
         ctrl_map = {}
-        changes = _new_ide_and_cdrom()
+        changes = _new_ide_and_cdrom(iso)
         for dev in src_cfg.hardware.device:
             kind = _SCSI_NAMES.get(type(dev).__name__)
             if kind is None:
@@ -645,6 +746,9 @@ def create_from_profile(conn_details, params, host_name=None):
 
         _LOGGER.info("按样板 %s 创建虚拟机 %s（磁盘来源=%s）",
                      src_vm.name, name, source)
+        if iso:
+            _LOGGER.info("虚拟机 %s 创建时挂载 ISO：[%s] %s",
+                         name, iso[0], iso[1])
         task = dc.vmFolder.CreateVM_Task(
             config=spec, pool=host.parent.resourcePool, host=host)
         _wait_task(task, f"创建虚拟机 {name}", timeout=900)
@@ -999,6 +1103,11 @@ def delete_vm(conn_details, moid, host_name=None):
     with _session(conn_details) as (_, content):
         dc = _get_datacenter(content)
         vm = _find_vm(content, moid)
+        # ⚠ 必须先把名字取出来：下面 Destroy_Task / UnregisterVM 一旦执行完，
+        #   vim.VirtualMachine:<moid> 这个受管对象就没了，之后再读 vm.name
+        #   会让 pyvmomi 现拉属性 → 抛 ManagedObjectNotFound（"has already been
+        #   deleted"），删除明明成功了，前端却收到 400 红字报错。
+        vm_name = vm.name
         if not _is_off(vm):
             raise RuntimeError(
                 "虚拟机正在运行或处于挂起状态，请先彻底关机再删除")
@@ -1021,22 +1130,22 @@ def delete_vm(conn_details, moid, host_name=None):
 
         if not has_nonpersistent and not external_disks:
             _wait_task(vm.Destroy_Task(), "从磁盘移除虚拟机", timeout=600)
-            _LOGGER.info("虚拟机 %s 已从磁盘彻底移除（Destroy）", vm.name)
-            return {"name": vm.name, "method": "destroy"}
+            _LOGGER.info("虚拟机 %s 已从磁盘彻底移除（Destroy）", vm_name)
+            return {"name": vm_name, "method": "destroy"}
 
         # 安全路径：取消注册 + 只删自己的目录
         if external_disks:
             _LOGGER.info("虚拟机 %s 含外部/共享磁盘，取消注册时保留：%s",
-                         vm.name, external_disks)
+                         vm_name, external_disks)
         vm.UnregisterVM()
         time.sleep(1)
         _delete_datastore_dir(content, dc, ds_name, top_dir)
         _LOGGER.info(
             "虚拟机 %s 已取消注册并删除其目录 [%s] %s（非持久=%s，外部盘=%s）",
-            vm.name, ds_name, top_dir, has_nonpersistent,
+            vm_name, ds_name, top_dir, has_nonpersistent,
             len(external_disks))
         return {
-            "name": vm.name,
+            "name": vm_name,
             "method": "unregister",
             "deleted_dir": f"[{ds_name}] {top_dir}",
             "external_disks_kept": external_disks,
@@ -1090,3 +1199,110 @@ def _delete_datastore_dir(content, dc, ds_name, dir_name):
                 name=f"[{ds_name}] {'/'.join(parts[:index])}", datacenter=dc)
         except Exception:  # noqa: BLE001
             break
+
+
+def browse_datastore(conn_details, ds_name, ds_path="", host_name=None):
+    """浏览数据存储的某一层：返回直接子目录与文件列表。
+
+    底层用一次 ``SearchDatastoreSubFolders_Task`` 递归拉整块存储、在本地解析成
+    目录树并缓存（``_DS_TREE_TTL`` 秒），进入任意层级都是查表、毫秒级返回。
+
+    ⚠️ 解析规则同时兼容 ESXi 5.5 与 6.7+（均真机验证）：
+      * 每行 ``folderPath`` 指向一个目录，行内 ``file`` 是它的直接条目
+        （目录与文件混排，5.5 上目录也是 ``FileInfo``、没有类型标识，
+        6.7 上目录是 ``FolderInfo``——所以**不能按 file 项类型区分**）；
+      * 目录集合 = 全部行的 folderPath（去掉 ``[ds] `` 前缀后的相对路径），
+        某行的 file 项只要「相对路径 + / + 名字」命中目录集合即为子目录。
+    """
+    ds_path = (ds_path or "").strip().strip("/")
+    tree = _ds_tree(conn_details, ds_name, host_name)
+    node = tree.get(ds_path) or {"dirs": [], "files": []}
+    return {
+        "ds": ds_name,
+        "path": ds_path,
+        "dirs": list(node["dirs"]),
+        "files": [dict(f) for f in node["files"]],
+    }
+
+
+def _ds_tree_key(conn_details, host_name, ds_name):
+    return _inventory_key(conn_details, host_name) + (ds_name,)
+
+
+def _ds_tree(conn_details, ds_name, host_name=None):
+    """取整块存储的目录树（带 TTL 缓存）。"""
+    key = _ds_tree_key(conn_details, host_name, ds_name)
+    with _LOCK:
+        hit = _DS_TREE_CACHE.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
+    tree = _build_ds_tree(conn_details, ds_name, host_name)
+    with _LOCK:
+        _DS_TREE_CACHE[key] = (time.monotonic() + _DS_TREE_TTL, tree)
+    return tree
+
+
+def _build_ds_tree(conn_details, ds_name, host_name=None):
+    """一次递归任务拉全存储，解析成 ``{相对路径: {dirs, files}}`` 目录树。"""
+    with _session(conn_details) as (_, content):
+        host = _get_host(content, host_name)
+        ds = _find_datastore(host, ds_name)
+        if ds is None:
+            raise RuntimeError(f"找不到数据存储 {ds_name}")
+        if not ds.summary.accessible:
+            raise RuntimeError(f"数据存储 {ds_name} 当前不可访问")
+        browser = getattr(ds, "browser", None)
+        if browser is None:
+            raise RuntimeError(f"数据存储 {ds_name} 不支持浏览")
+
+        current = f"[{ds_name}]"
+        spec = vim.host.DatastoreBrowser.SearchSpec(
+            details=vim.host.DatastoreBrowser.FileInfo.Details(
+                fileType=False, fileSize=True, modification=True),
+            searchCaseInsensitive=True,
+        )
+        task = browser.SearchDatastoreSubFolders_Task(
+            datastorePath=current, searchSpec=spec)
+        _wait_task(task, f"浏览 {current}", timeout=300)
+
+        prefix = current + " "
+        tree = {}
+        for row in task.info.result or []:
+            folder = getattr(row, "folderPath", "") or ""
+            if folder == current:
+                rel = ""
+            elif folder.startswith(prefix):
+                rel = folder[len(prefix):]
+            else:
+                continue
+            tree.setdefault(rel, {"dirs": [], "files": []})
+        dir_set = set(tree)
+        for row in task.info.result or []:
+            folder = getattr(row, "folderPath", "") or ""
+            if folder == current:
+                rel = ""
+            elif folder.startswith(prefix):
+                rel = folder[len(prefix):]
+            else:
+                continue
+            node = tree[rel]
+            for item in row.file or []:
+                name = getattr(item, "path", "") or ""
+                if not name:
+                    continue
+                # rel 为空串（根层）时子目录键就是 name，不能拼出前导斜杠
+                child = f"{rel}/{name}" if rel else name
+                if child in dir_set:
+                    node["dirs"].append(name)
+                else:
+                    mtime = getattr(item, "modification", None)
+                    node["files"].append({
+                        "name": name,
+                        "size": int(getattr(item, "fileSize", 0) or 0),
+                        "mtime": mtime.isoformat() if mtime else None,
+                    })
+        for node in tree.values():
+            node["dirs"].sort(key=str.lower)
+            node["files"].sort(key=lambda item: item["name"].lower())
+        _LOGGER.debug("目录树 %s：%d 个目录", current, len(tree))
+        return tree

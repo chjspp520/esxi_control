@@ -2,6 +2,503 @@
 
 ---
 
+# 2026-10-19 管理页清单加 TTL 缓存，打开/刷新更快（移植 `esxi_stats` 10.19，集成版本 `1.1.0`）
+
+> **集成版本**：`1.1.0`（`manifest.json` 与 `const.py` 的 `VERSION`）
+> **范围**：`vm_admin_ops.py`、`console_web.py`。前端**一行没动**。
+
+## 1. 对比结果：作者说的「后端优化」就是这一个改动
+
+把两边的后端逐段对齐后确认，**清单遍历逻辑本身一个字都没变** —— 现在的
+`_get_inventory_uncached()` 与参考版的同名函数**逐字节相同**（都是 59 行）。
+变的只是外面套了一层缓存：
+
+| 项目 | `esxi_control`（移植前） | `esxi_stats` 10.19 |
+|---|---|---|
+| `_INVENTORY_TTL` / `_INVENTORY_CACHE` | **无** | 有，60 秒 |
+| `invalidate_inventory()` | **无** | 有 |
+| `get_inventory()` | 直接连 ESXi 全量遍历 | 缓存包装层，未命中才调 `_get_inventory_uncached()` |
+| `console_web.py` 调用失效 | 无 | 2 处（批量创建后、单机写操作后） |
+| `AdminInventoryView` | 相同 | 相同（都是 `Cache-Control: no-store`） |
+| 前端 `index.html` | 相同 | 相同（轮询都是 15 秒） |
+
+（`_DS_TREE_TTL` 目录树缓存在上一轮的 ISO 移植里已经带过来了。）
+
+## 2. 为什么能变快
+
+`GET .../inventory` 每次都是**连一次 ESXi + 遍历每台 VM 的全部设备**
+（控制器 / 磁盘 / 网卡 / 固件 / 快照 / 模板标记……），VM 多时要好几秒。
+而它的消费场景（列表展示、新建/编辑弹窗的选项）并不需要每 15 秒都是实时数据。
+现在按「主机 + 端口 + 用户 + 主机键」缓存 60 秒：
+
+* 管理页**打开**、15 秒**定时轮询**、**多标签页**同时开着 → 全都直接吃缓存，不再反复全量拉取；
+* 写操作（创建 / 删除 / 改配 / 模板开关 / 磁盘模式）成功后视图层立刻
+  `invalidate_inventory()` 主动失效 → 操作完的下一次拉取一定是新数据，不会看到旧清单。
+
+## 3. 具体改动
+
+`vm_admin_ops.py`：
+
+| 位置 | 内容 |
+|---|---|
+| 模块常量 | 新增 `_INVENTORY_TTL = 60.0`、`_INVENTORY_CACHE = {}` |
+| `invalidate_inventory(conn_details, host_name=None)` | 新增。`host_name` 为空 = 清整台 ESXi（批量任务不知道落在哪台）；传了就只清那台。**清单缓存与目录树缓存一并清** |
+| `get_inventory()` | 改成缓存包装层：命中且未过期就直接返回，否则调下面的函数并把结果写回缓存 |
+| `_get_inventory_uncached()` | 原 `get_inventory` 的函数体原样改名，逻辑一行没动 |
+| host 字典 | 补 `"address": conn_details.get("host") or ""`（顺带对齐参考版；前端暂未用） |
+
+`console_web.py`：
+
+| 位置 | 内容 |
+|---|---|
+| `_admin_run_batch()` 末尾 | `vm_admin_ops.invalidate_inventory(conn_details)`（批量创建不知道落在哪台主机 → 清整台） |
+| `AdminApiView.post` 写操作之后 | `vm_admin_ops.invalidate_inventory(conn_details, host_key)` |
+
+## 4. 注意
+
+- 改的是 `.py`，**需要重启 HA** 才生效。
+- 缓存在**内存**里，HA 重启即清空；不落盘、不含密码（缓存键不含密码，只有 host/port/user/host_name）。
+- 生效范围：仅 `.../inventory` 这一个接口。HA 自己的实体数据走的是
+  `EsxiStats._update_data()`（中央定时器），**不受这个缓存影响**。
+- 代价：在 ESXi 原生界面 / 别的工具里增删虚拟机，管理页最多会**慢 60 秒**才看到。
+  想立刻看到就点一下页面上的刷新（或跑一次 `esxi_control.sync` 会连带刷新 HA 数据，
+  但清单缓存仍按 TTL 走 —— 真要立刻看到就直接刷新页面前先做个写操作，或等 60 秒）。
+
+---
+
+# 2026-10-19 新建/删除虚拟机后自动同步实体，不用再手动重载（集成版本 `0.13.0`）
+
+> **集成版本**：`0.13.0`（`manifest.json` 与 `const.py` 的 `VERSION`）
+> **范围**：`entity_sync.py`（新增调度器）、`__init__.py`（变化检测）、
+> `console_web.py`（两个触发点）。**没有新增/删除任何文件或平台**。
+
+## 1. 背景：为什么原来必须手动重载
+
+所有实体只在各平台的 `async_setup_entry` 里**创建一次**，之后 ESXi 上再怎么增删虚拟机，
+HA 侧都不会多出或消失实体：
+
+* 新建的虚拟机 → 数据其实已经拉回来了（`hass.data[...]["vm"]` 里有它），但**没有任何实体承载它**；
+* 删除的虚拟机 → 实体**继续挂着**，而且残留的键让它一直显示删除前的旧值。
+
+唯一的对齐手段是手动触发 `esxi_control.sync` 服务 / 「同步实体」按钮，二者都走
+`entity_sync.async_sync_entry()`。所以之前只能靠**手动重载集成条目**来对齐。
+
+## 2. 做法：给已有的同步内核接上两个自动触发器
+
+`async_sync_entry()` 本身功能完备（增 + 删 + 空壳设备清理 + 短 entity_id + 三道防误删守卫），
+这次**一行没改它的逻辑**，只是新增了一个「发请求就返回、延迟后台跑」的调度器：
+
+`entity_sync.py` 新增：
+
+| 新增 | 说明 |
+|---|---|
+| `async_request_sync(hass, entry_id, delay=5.0, reason="")` | 排一次自动同步；**窗口内重复请求合并成一次**（已有排队任务就直接忽略，保证「第一次变化」起算，连续变化不会把同步无限往后推）。平台钩子没登记 / entry 不存在时直接返回 `False`。⚠️ 必须在事件循环里调用 |
+| `cancel_auto_sync(hass, entry_id)` | 取消还没跑的自动同步 |
+| `AUTO_SYNC_DEBOUNCE = 5.0` / `AUTO_SYNC_KEY` | 合并窗口常量与 `hass.data` 里的任务键 |
+
+### 触发点 A：虚拟机清单发生变化（`__init__.py` 的中央刷新）
+
+`EsxiStats` 的中央定时器（`async_track_time_interval`，10 秒 tick，内部 45 秒节流）
+在每轮 `client.update_data()` **前后**各取一次 `vm` 的键集合，不一样就排一次同步：
+
+```python
+vm_before = set(data.get("vm") or {})
+await hass.async_add_executor_job(client.update_data)
+vm_after  = set(data.get("vm") or {})
+```
+
+- **首轮不算变化**（`first_refresh_done`）：平台 setup 用的就是这份数据，实体早已建好，
+  否则每次重启 HA 都会白跑一次同步。
+- **整份清单突然全空且没有新增** → 判定为「主机不可达 / 权限被收回 / 连到了空 vCenter」，
+  **直接不触发同步**（`async_sync_entry` 内部还有一道同样的守卫，这里再拦一次）。
+- 覆盖场景：在 ESXi 原生界面 / 其他工具里增删或改名虚拟机，也会被自动发现。
+  改名 = 旧键消失 + 新键出现 → 一次同步同时完成「删旧的 + 加新的」。
+
+### 触发点 B：管理页自己的操作（`console_web.py`）
+
+| 位置 | 触发 |
+|---|---|
+| `_admin_run_batch()` 末尾 | 批量创建任务跑完 → `async_request_sync(delay=2.0, reason="管理页批量创建（N 台）")` |
+| `AdminApiView.post` 的 `delete` 分支 | 删除成功 → `async_request_sync(delay=2.0, reason="管理页删除虚拟机")` |
+
+这两处不用等中央轮询的 45 秒节流，操作完 2 秒就对齐。
+
+### 卸载时收尾
+
+`async_unload_entry` 里加了 `cancel_auto_sync(...)`，避免排队中的同步在平台卸载后
+去调已经失效的 `add_entities` 钩子。
+
+## 3. 安全守卫（自动删除实体不可逆，所以保留了全部原有守卫）
+
+`async_sync_entry()` 里原有的三道守卫**一条没动**，自动触发同样吃得到：
+
+1. `client.last_update_ok` 为假 → 只新增、一个都不删；
+2. 刷新「成功」却一台主机 / 虚拟机都没有，而注册表里还有实体 → 判定异常，只新增不删除；
+3. 某平台的 `_build_entities` 抛异常 → 该平台已有实体一律视为要保留。
+
+外加触发点 A 里那道「清单全空不触发」。
+
+## 4. 注意
+
+- 改的是 `.py`，**需要重启 HA** 才生效。
+- 同步是异步后台跑的：管理页点完创建/删除，HA 里实体大约 **2 秒后**出现/消失；
+  在 ESXi 别处增删则是最多 **一个刷新周期（默认 45 秒）+ 5 秒**。
+- 手动入口（服务 `esxi_control.sync`、「同步实体」按钮）**照旧保留**，随时可以手动再跑一次。
+- 残留风险：如果 ESXi 某一轮只返回了**部分**虚拟机（权限/连接异常），这些 VM 的实体会被
+  当作「已消失」删掉；等下一轮它们回来时会重新建回来（历史会断一截）。实践中极少见，
+  真遇到了用手动同步也不会更好 —— 这是「自动」必然要接受的代价。
+
+---
+
+# 2026-10-19 修 Bug：删除虚拟机弹「ManagedObjectNotFound」，其实已经删掉了（集成版本 `0.12.2`）
+
+> **集成版本**：`0.12.2`（`manifest.json` 与 `const.py` 的 `VERSION`）
+> **范围**：`vm_admin_ops.py` 的 `delete_vm()`（`console_web.py` 与前端未动）。
+
+## 现象
+
+管理页点「删除」→ 红色 toast 报：
+
+```
+(vmodl.fault.ManagedObjectNotFound) {
+   msg = "The object 'vim.VirtualMachine:36' has already been deleted
+          or has not been completely created", obj = 'vim.VirtualMachine:36' }
+```
+
+但清单刷新后虚拟机确实没了 —— 删除是成功的，只是**成功后才报错**。
+
+## 根因
+
+`delete_vm()` 在**破坏性操作之后**才去读 `vm.name`：
+
+```python
+_wait_task(vm.Destroy_Task(), "从磁盘移除虚拟机", timeout=600)
+_LOGGER.info("虚拟机 %s 已从磁盘彻底移除（Destroy）", vm.name)   # ← 对象已不存在
+return {"name": vm.name, "method": "destroy"}
+```
+
+`Destroy_Task` / `UnregisterVM()` 一执行完，`vim.VirtualMachine:<moid>` 这个受管对象
+就从 ESXi 清单里消失了。此时再读 `vm.name`，pyvmomi 会去现拉属性 → 抛
+`ManagedObjectNotFound`。异常冒泡到 `console_web.py::AdminApiView.post` 的
+`except Exception` → `{"error": str(exc)}` + HTTP 400 → 前端 `apiPost` 抛错 → 红字 toast。
+
+两条删除路径都中招（Destroy 路径和「取消注册 + 删目录」路径），所以无论哪种删除方式都会看到。
+
+## 修法
+
+在 `_find_vm()` 之后、**任何破坏性操作之前**把名字先取出来，后面一律用局部变量：
+
+```python
+vm = _find_vm(content, moid)
+vm_name = vm.name          # ← 新增：趁对象还在先取
+...
+_wait_task(vm.Destroy_Task(), ...)
+return {"name": vm_name, "method": "destroy"}
+```
+
+日志与返回值里的 5 处 `vm.name` 全部换成 `vm_name`。删除逻辑本身（判关机、判外部盘、
+Destroy/Unregister 选择、目录清理）一行没动。
+
+## 注意
+
+- 改的是 `.py`，**需要重启 HA** 才生效。
+- 参考版 `esxi_stats`（10.19）的 `delete_vm()` 有**同样的问题**（1128/1129、1140~1143 行
+  同样在删除后读 `vm.name`），所以这个 Bug 不是移植时引入的，是两边共有的，只在
+  `esxi_control` 这边顺手修了。
+
+---
+
+# 2026-10-19 新建虚拟机支持选择 ISO 镜像（集成版本 `0.12.1`）
+
+> **集成版本**：`0.12.1`（`manifest.json` 与 `const.py` 的 `VERSION`）
+> **范围**：`vm_admin_ops.py`、`console_web.py`、`www_admin/index.html`。
+> 从 `esxi_stats`（10.19 版）移植过来的能力：新建虚拟机时可以浏览数据存储、挑一个
+> `.iso` 挂到虚拟光驱上，开机即自动从光盘启动。
+
+## 1. 后端 `vm_admin_ops.py`
+
+| 新增 / 改动 | 说明 |
+|---|---|
+| `_new_ide_and_cdrom(iso=None)` | 原来恒为「客户端介质光驱（未连接）」；传 `(ds, path)` 时改为 `IsoBackingInfo` + `connected/startConnected=True`，创建完成即已连上光盘 |
+| `_parse_iso_param(params, host)` | 归一 `params["iso"]`：`{"ds","path"}`（网页浏览器的选择结果）或 `"[ds] 目录/x.iso"`（服务调用便捷形式）；校验存储在本机存在、文件以 `.iso` 结尾 |
+| `create_vm` / `create_from_profile` | 增加了 `iso` 参数（手工新建与「按样板创建」两条路都支持），创建前解析、创建时挂光驱，并补一行挂载日志 |
+| `browse_datastore(conn_details, ds_name, ds_path, host_name)` | 浏览数据存储某一层，返回 `{ds, path, dirs[], files[{name,size,mtime}]}` |
+| `_ds_tree` / `_build_ds_tree` / `_ds_tree_key` / `_inventory_key` | 目录树支撑：一次 `SearchDatastoreSubFolders_Task` 递归拉全存储，本地解析成 `{相对路径: {dirs, files}}` 并按 `_DS_TREE_TTL = 300s` 缓存，之后进任意层级都是查表 |
+| `_DS_TREE_TTL` / `_DS_TREE_CACHE` | 新增模块级缓存（键不含密码） |
+
+目录解析的两个坑（真机验证，注释里也写了）：
+
+- `SearchDatastoreSubFolders_Task` 每行 `folderPath` 是一个目录、行内 `file` 是它的直接条目，**目录与文件混排且没有类型标识**（5.5 上目录也是 `FileInfo`，6.7 上才是 `FolderInfo`）→ 不能按 `file` 项类型区分，必须拿「相对路径 + `/` + 名字」去目录集合里匹配。
+- 根层 `rel` 是空串，拼子目录键时不能带出前导斜杠。
+
+## 2. 后端 `console_web.py`
+
+`AdminApiView.post` 新增 `op == "browse_datastore"`：取 `ds` / `path`，转执行器跑
+`vm_admin_ops.browse_datastore`，失败统一 400，成功返回 `Cache-Control: no-store` 的 JSON。
+`create_batch` 那一路不用改 —— `iso` 随 `payload["vm"]` / `payload["profile"]` 原样透传到
+`_admin_run_batch`，再逐台塞进 `params`。
+
+## 3. 前端 `www_admin/index.html`
+
+- 新建弹窗增加「虚拟光驱」区块（并纳入移动端的 `.m-sec` 分区）：勾选「创建时挂载 ISO 镜像」
+  后展开「浏览存储…」按钮 + 当前镜像标签 + 「移除」按钮。
+- 新增二层弹窗 `#modal-ds`（选择 ISO 镜像）：存储下拉 + 「进入目录」下拉 / 「上一级」按钮 +
+  路径面包屑（点任一级跳转）+ 只列当前目录 `.iso` 的清单（带大小），单击选中后「确定」才可用。
+- 提交前校验：勾了 ISO 但没选镜像 → 提示「请先浏览并选择 ISO 镜像」；勾选时才把
+  `iso: {ds, path}` 放进 `vm` / `profile` 载荷，未勾选不传（保持原来行为）。
+- 打开新建弹窗时复位 ISO 选择（`c-iso-on` 取消勾选、`createIso = null`、收起行）。
+- CSS 补 `.crumb / .crumb .sep / .crumb a / .crumb .cur`（面包屑样式，复用现有 CSS 变量）。
+
+## 4. 注意
+
+- 页面由 `_admin_page_template()` 按 mtime 缓存，**改完刷新页面即生效**；但
+  `vm_admin_ops.py` / `console_web.py` 需要**重启 HA**。
+- 目录树缓存 5 分钟：刚上传的 ISO 若没出现在列表里，等一会儿或换个目录再进即可。
+- 未勾选 ISO 时创建逻辑与 0.12.0 完全一致（光驱仍是未连接的客户端设备）。
+
+## 5. 顺带修 Bug：任务进度条结束后不收起，标题永远显示「批量任务」
+
+现象：批量（或单台）创建虚拟机跑完后，页顶那条进度条**一直挂着**，`#job-title`
+写死是「批量任务」，之后做删除等任何操作它都还杵在那里。
+
+根因有两处，都在 `pollJob()` 里：
+
+1. **崩溃**：`$("job-count").textContent = ... ${job.failed.length}` —— 后端任务对象
+   （`console_web.py::_create_batch` 里建的 `{state, total, done, items, cancel}`）
+   **根本没有 `failed` 字段**，`job.failed.length` 直接抛 `TypeError`。抛出点在第 1483 行，
+   此时进度条宽度已置 100%，于是「卡在 100% + 标题停在 HTML 里的静态文本『批量任务』」，
+   后面的清 sessionStorage / 收起 / `loadInventory()` 全都没执行。
+2. **标题没有动态化**：`startJobPolling(jobId)` 只收一个参数，从不写 `#job-title`，
+   所以标题永远是 HTML 里写死的那三个字。
+
+修法（对齐 `esxi_stats` 10.19 版，并补了自动收起）：
+
+| 改动 | 说明 |
+|---|---|
+| `startJobPolling(jobId, title)` | 新增 `title` 参数，写入 `sessionStorage`（key `esxi_admin_job_title`），刷新/重开恢复进度时一并恢复标题；fallback 文案由「批量任务」改「任务进度」 |
+| 创建提交处 | 按台数给标题：单台 `创建虚拟机 X`、批量 `批量创建 · N 台` |
+| 失败数统计 | 改成从 `items` 里数 `state === "failed"`（不再依赖后端不存在的字段） |
+| 结束态文案 | 进行中 / 已取消 / 有失败 / 全部完成 四种，进度条同步加 `.done`（绿）/ `.err`（红） |
+| 结束收尾 | 清 sessionStorage → 弹结果 toast → `loadInventory()` → **4 秒后自动收起进度条**（结果已在 toast 和清单里，不需要再占着页面） |
+| 「关闭」按钮 | 连 sessionStorage 一起清，否则刷新后 `startJobPolling(resumeJob)` 又把条子拉回来 |
+| CSS | 补 `.progress > div.done / .err`（复用 `--ok` / `--danger`） |
+
+---
+
+# 2026-10-18 虚拟机管理页配色改为「房间精灵 ESXi 卡片」同款 teal 浅色
+
+> **范围**：仅 `www_admin/index.html` 的 `<style>` 段 —— **纯颜色改动**，布局、结构、交互、脚本一律未动。
+> 动机：这张页现在以 iframe 嵌在房间精灵卡片的「虚拟机 → 新建虚拟机」子选项卡里，原来的深色 GitHub 蓝（`#58a6ff`）与卡片的浅色玻璃 + teal 主色完全不搭。
+
+## 1. 新配色（与卡片同源）
+
+| 变量 | 原（深色） | 现（浅色 teal） | 用途 |
+|---|---|---|---|
+| `--bg` | `#11151c` | `#fbfcfc` | 页面底 |
+| `--panel` | `#202a38` | `#ffffff` | 表格 / 弹窗 / 输入框 |
+| `--panel2` | `#2a3646` | `#f2f7f7` | 页头 / 表头 / 弹窗标题栏 |
+| `--line` | `#33425a` | `rgba(0,0,0,.10)` | 全部描边 |
+| `--text` | `#e6edf3` | `#1a1a1a` | 正文（= 卡片 `--room-primary-text`） |
+| `--muted` | `#8b98a9` | `#7f8a8a` | 次要文字 |
+| `--accent` | `#58a6ff` | `#26a69a` | 主色（= 卡片选项卡主色） |
+| `--accent-dark` | （无） | `#00897b` | 白底上的主色文字 / 悬停 |
+| `--accent-weak` | （无） | `rgba(38,166,154,.12)` | 悬停底 / 淡色块 |
+| `--ok / --warn / --danger` | `#3fb950 / #d29922 / #f85149` | `#4caf50 / #ff9800 / #e53935` | 与卡片 VM 状态点同色 |
+| `--tpl` | `#bc8cff` | `#7e57c2` | 模板 / 快照徽标 |
+
+配套：`:root { color-scheme: light }`（让滚动条、单选框、日期控件跟着走浅色）。
+
+## 2. 具体规则
+
+- 主按钮 `.primary`：实心蓝 → `linear-gradient(135deg, #26a69a, #00897b)` + 淡投影（与卡片激活选项卡同款）。
+- 普通按钮：白底 + 细描边；悬停 = 淡 teal 底 + 深 teal 字。
+- 表格：白底、行悬停 `rgba(38,166,154,.06)`（原蓝色 5%）。
+- 状态点：on `#4caf50`、off `#9e9e9e`、挂起 `#ff9800`、异常 `#e53935`（对齐卡片 `.esxi-vm-dot`）。
+- 提示文字：警告色由 `#d29922` 改 `#d97706`（浅底上对比度更高），快照徽标同理。
+- 遮罩 `rgba(15,23,23,.38)`（原 55% 黑，浅色下过重）；弹窗 / toast 阴影同步减弱。
+- 移动端「电源胶囊」：白 4% 底 → 黑 3% 底，三个 `:has(.dot.xxx)` 状态色同步。
+
+## 3. 注意
+
+- 页面按 `<style>` 里的变量取色，**以后改配色只动 `:root` 即可**。
+- `console_web.py` 的 `_admin_page_template()` 按文件 mtime 缓存，改完无需重启 HA，刷新页面即生效。
+- 另有一份 `www_admin/index - 副本.html`（旧备份）保持原样，未改、也未再被引用。
+
+## 4. 移动端：每台虚拟机的小卡片改成「指标网格」布局
+
+> 只在 `@media (max-width: 760px)` 内生效，桌面端仍是原来的表格，一行没动。
+
+`tr` 从「display:block 的表格行」改成 **两列 CSS Grid**（`grid-template-columns: 1fr 1fr`，`gap: 8px`），单元格用 `order` 排位：
+
+| 位置 | 内容 |
+|---|---|
+| ① 标题行（`grid-column: 1 / -1`，`order: 1`） | 名称 + 徽标（模板/快照）+ 客户机系统名 |
+| ② 指标格（`order: 2/3`） | `CPU·内存` \| `网卡`，各一块淡底圆角（`--panel2` + 9px 圆角 + 7/9px 内边距），标签一行（11px 灰）、值一行 |
+| ③ 硬盘（`order: 4`，跨两列） | 常有多块 / 名字长，独占一行 |
+| ④ 操作行（`order: 5`，跨两列） | 一条 `--line` 分割线 + 三个等宽按钮 |
+| 右上角 | 电源状态胶囊（绝对定位，不占网格；`:has(.dot.on/.susp/.invalid)` 上色） |
+
+细节：
+
+- 标签从「左侧 4.6em 绝对定位」改成**块级 `::before` 标签**（`content: attr(data-label)`），值不再被挤在右边；
+- `td[data-label]` 加 `min-width: 0` + `overflow-wrap: anywhere`，长硬盘名/网卡名不会把网格撑破；
+- 桌面端那条 `tr:hover td` 的 teal 底色会冲掉指标格底色，移动端补了一条 `tr:hover td[data-label] { background: var(--panel2) }` 兜住；
+- 标题行（名称 + 徽标 + 客户机系统名）底下补一条 `1px solid var(--line)` 分割线，把标题和指标格分开（`padding-bottom: 8px`）；右侧仍留 78px 给电源胶囊，分割线本身横贯整行；
+- 「系统」技术名（`other6xLinux64Guest`）在移动端继续隐藏（与标题下的客户机系统名重复）；
+- 加载中 / 空结果的 `td[colspan]` 补 `grid-column: 1 / -1`，否则只占半行。
+
+**验证**：本地生成 `index.html` 的预览副本（占位符替换 + `fetch` 打桩，塞 3 台假 VM：运行中/已关机/挂起，含 2 块盘 + 2 张网卡的边界情况），用 headless Chrome 在 390px 宽 iframe 里截图核对；桌面 1200px 另截一张确认表格未受影响。
+
+### 追加：`CPU·内存` 指标格改一行
+
+原来值是这样的（内存是块级 `div`，天然占第二行）：
+
+```
+CPU·内存
+4 核
+8192 MB        ← 多占一行，半宽格子被撑高，与右边单行的「网卡」不齐
+```
+
+现在合成一行（**纯 CSS，只在移动端**）：
+
+```
+CPU·内存
+4 核 · 8192 MB
+```
+
+```css
+td[data-label="CPU·内存"] .muted { display: inline; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+td[data-label="CPU·内存"] .muted::before { content: "·"; margin: 0 5px; color: var(--muted); }
+```
+
+- 桌面端表格里仍是两行（`display: inline` 只在媒体查询内），已截图确认未受影响；
+- `tabular-nums` 让不同 VM 的核数/内存数字宽度一致，纵向扫读更整齐；
+- 卡片高度随之变矮（每张卡少约 18px），一台一屏能看到更多。
+- 若想更省字，可把 `8192 MB` 显示成 `8 GB`（需要改 `renderRows()` 里的取值，未做）。
+
+## 5. 移动端：「编辑硬件」弹窗的硬盘 / 网卡条目 + 加盘加卡区
+
+> 仍然只在 `@media (max-width: 760px)` 内；桌面弹窗的行式布局未动（只把硬盘属性的全角括号换成 ` · ` 分隔）。
+
+**条目卡片**：`.mini-list .row` 由 `flex-wrap` 改成**两列 grid**，固定三层结构（原来靠 wrap 碰运气，型号和 MAC 会挤在一行、勾选框位置也飘）：
+
+| 层 | 内容 | 规则 |
+|---|---|---|
+| ① | 标题 + 灰色属性（`持久·精简` / `VMXNET3 00:50:…`） | `.grow` 跨两列；`.muted` 改成 `display:block` 另起一行、11.5px |
+| ② | 主操作：`扩容到 [x] GB` / 网络下拉 | 跨两列；数字输入 96px + `text-align:right`；网卡下拉铺满 |
+| ③ | 危险操作：`移除` / `连同文件删除` | 两列等分；`:has(.rm-disk/.rm-file/.rm-nic)` 染 `--danger` 红字 |
+
+**加盘 / 加网卡**：`.add-row` 改成 **grid 两列**（`!important` 顶掉 HTML 里的内联 `display:flex` / `width:110px`）：
+
+```
+添加硬盘
+[ 容量 20        ] [ Thin 精简 ▾ ]
+[ Date（剩余 372GB）        ▾ ]
+[ ＋ 添加硬盘（整行）        ]
+```
+
+存储/端口组、按钮、待加清单各占整行，按钮点按面积更大。
+
+**紧凑化（第二次调整）：每台一张卡 → 一整块区域**
+
+第一版是「每台盘/每张网卡各一张卡」（各自一圈边框 + `margin-bottom: 7px` + 三段留白），两个硬盘就占 220px。
+现在改成 **一个圆角外框 + 内部行式列表**，行间一条细线：
+
+```
+┌ 硬盘（只能扩容，不能缩小） ───────────────┐
+│ Hard disk 1 · 持久·精简                  │
+│ 扩容到 [ 300 ] GB   ☐移除  ☐连同文件删除 │
+├──────────────────────────────────────────┤
+│ Hard disk 2 · 非持久                     │
+│ 扩容到 [ 500 ] GB   ☐移除  ☐连同文件删除 │
+└──────────────────────────────────────────┘
+```
+
+- `.mini-list { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }`
+- `.row` 由 grid 改回 **flex + wrap**：`padding: 7px 10px`、`border-bottom` 分隔、最后一行不描边；
+  `.grow`（名称 + 属性）`flex: 1 1 100%` 独占一行，扩容输入框与两个勾选项同排，放不下自动换行；
+- 名字与属性恢复同一行（沿用桌面端 `.grow .muted::before` 的 `" · "` 分隔），标题 13px、属性 11.5px；
+- 输入框 84×30、勾选框 16×16、`min-height: 26px`，比之前 96px/17px/30px 更紧凑但仍在可点范围；
+- 网卡行同理：`网络适配器 1 · VMXNET3 00:50:56:aa:bb:01` 一行，网络下拉（`flex: 1 1 160px`）+ `☐移除` 一行；
+- 两个硬盘实测从 ~220px 压到 ~110px，两个网卡从 ~180px 压到 ~120px。
+
+**其它**：
+
+- 弹窗底部 `.modal-f button.primary` 给 2 份宽度、取消 1 份，主次分明；
+- **CPU / 内存 并排**：窄屏原本把 `.grid` 统一压成一列（新建虚拟机字段太多，两列会挤），
+  给编辑硬件那个 grid 加了 `class="grid grid-2"`，媒体查询里 `.grid.grid-2 { grid-template-columns: 1fr 1fr }`，
+  只让这一处保持两列，其余 `.grid` 仍是一列；
+- **「添加硬盘 / 添加网卡」默认折叠，点标题展开**（移动端）：
+  - 脚本启动时给每个 `.add-row` 生成一个 `.add-row-toggle` 标题按钮，并把原控件**挪进** `.add-row-body`
+    （是移动节点、不是重建，所以按 id 绑的事件、已填的值都保留）；
+  - 桌面端 `.add-row-toggle { display: none }` + `.add-row-body { display: contents }` —— 等于没有这层包装，
+    布局与改动前完全一致（已截图确认）；
+  - 移动端 `.add-row` 变 `display: block`、`padding: 0`，折叠时只剩一条虚线按钮（`添加硬盘 ▾`），
+    展开后 `.add-row-body` 变两列网格（容量 | 精简 / 存储整行 / 提交按钮整行），chevron 旋转 180°，
+    并同步 `aria-expanded`；
+- `#e-hothint`（CPU/内存热添加 + 快照提醒）`line-height: 1.7`，两行时不再糊成一团；
+- 硬盘属性去掉全角括号：桌面端用 `.mini-list .row .grow .muted::before { content: " · " }` 做分隔，
+  移动端 `content: none`（因为属性已经独占一行）。
+
+**验证**：预览副本里塞一台「已关机 + 2 块盘（持久精简 / 非持久厚）+ 2 张网卡（含 MAC）」的假 VM，
+自动 `openEdit()` 后截图：顶部 `shot_edit.png`、滚到底部 `shot_edit2.png`、桌面 1100px `shot_edit_desktop.png`。
+
+## 6. 移动端：顶部搜索条
+
+原来的搜索框就是一个裸的原生 `input`，和右侧「N 台虚拟机」挤在一行：
+
+| 项 | 改法 |
+|---|---|
+| 观感 | 白底胶囊（`--panel` + 10px 圆角 + `--line` 描边），高 38px |
+| 图标 | 左侧内嵌放大镜（CSS `background-image` 走 data URI，颜色 `#8a9393` = `--muted`），文字左内边距 34px 避让 |
+| 聚焦 | 描边转 `--accent`，外加 `0 0 0 3px var(--accent-weak)` 光圈（原来只有 1px 变色的默认 outline） |
+| 计数 | `#list-status` 改 `flex: 0 0 auto`，只在放不下时整体换行（`flex-wrap`），永远不挤压输入框 |
+| 吸顶 | 工具栏用 `margin: 0 -8px 4px` + `padding: 8px` 把背景左右铺满，滚动时卡片不会从两侧缝里露出，并在底部加一条 `--line` 分割线 |
+| 键盘 | 输入框补 `enterkeyhint="search"` / `autocomplete="off"`，移动端回车键显示「搜索」 |
+
+> 输入框 16px 字号来自既有的「防 iOS 聚焦缩放」规则，没改。
+
+## 7. 移动端：「新建虚拟机」弹窗整体重排（四个区块 + 短字段两列）
+
+> 只在 `@media (max-width: 760px)` 内生效；桌面端仍是原来的平铺长表单（已截图确认）。
+
+原来是一条直下的长表单：十来个字段全靠滚动找、`.hr` 一条接一条、单选项是小圆点。
+
+### 结构：四个区块卡片
+
+HTML 里用 `<section class="m-sec">` 把内容分成四块（`.m-sec-h` 区块标题**桌面端 `display:none`**，所以桌面不受影响）：
+
+| 区块 | 内容 |
+|---|---|
+| 基本信息 | 创建方式（单台/批量）、虚拟机名称、批量命名 |
+| 硬件配置 | 硬件配置来源、客户机系统/固件/SCSI/CPU/内存/网卡型号、样板机信息 |
+| 硬盘 | 硬盘来源（新建/克隆/引用母盘）、容量、置备类型、提示 |
+| 存储与网络 | 数据存储、网络（端口组） |
+
+区块视觉：`--panel2` 底 + `--line` 描边 + 12px 圆角 + 标题（12px、`--accent-dark`、加粗）；
+区块内 `#modal-create .hr { display: none }`、`#modal-create .sub-title { display: none }`
+（分割线和重复的「硬盘」小标题都省掉，改由区块标题承担）。
+
+### 布局：短字段两列 + 单选项胶囊
+
+- `class="grid grid-2"` 给硬件配置与「容量 / 置备类型」两组；长的字段标 `.field.full` 跨两列
+  （客户机操作系统、网卡型号、硬件配置来源、数据存储、网络）；
+- 窄屏顺序用 `order` + `:has(#c-xxx)` 重排成 **固件|SCSI、CPU|内存**（DOM 顺序是按桌面端排的，桌面不变）；
+- 单选项改成**胶囊**：`flex: 1 1 auto` + 描边 + 圆角，选中 `:has(input:checked)` → teal 描边 + 淡底 + 加粗；
+- 批量命名：`#f-batch > div[style]` 用 `display: grid !important` 改成「前缀整行 + 起始/位数/数量三列」。
+
+### 顺手修掉一个真 bug
+
+`onProfileChange()` 里 `$("c-disk-source-profile").style.display = vm ? "" : "";` —— 两边都是 `""`，
+**手工配置时也会露出「完整克隆 / 引用母盘」**，而且两组 radio 同名 `m-disk` 会互相顶掉 `checked`。
+改成 `vm ? "" : "none"`，现在手工配置只剩「新建空白硬盘」一个选项。
+（这条在桌面端同样生效，属于修正而非改版。）
+
+**验证**：390px 宽 iframe 截图三张 —— 顶部 `shot_create_top.png`、底部 `shot_create_end.png`、
+批量模式 `shot_create_batch.png`；桌面 1150px `shot_create_desktop.png`。
+
+---
+
 # 2026-10-18 改名（集成版本 `0.12.0`）
 
 > **集成版本**：`0.12.0`（`manifest.json` 与 `const.py` 的 `VERSION`）

@@ -81,7 +81,12 @@ from .const import (
     ISO_UPLOAD_DIR,
 )
 
-from .entity_sync import async_sync_entry, clear_platform_hooks
+from .entity_sync import (
+    async_request_sync,
+    async_sync_entry,
+    cancel_auto_sync,
+    clear_platform_hooks,
+)
 from .entry_options import current_options
 from .naming import apply_short_entity_ids
 from .screenshot_hub import HUB_KEY
@@ -431,8 +436,43 @@ async def async_setup_entry(hass, config_entry):
     #   tick 10 秒 + client 内节流）拉 ESXi。各实体的 update() 只读 hass.data
     #   快照，绝不再自己触发网络请求 —— 否则几十个实体的 2~15 秒轮询会叠在同一条
     #   全量拉取上（129 台 VM 时单次拉取超过 10 秒），堵死实体更新线程池并刷告警。
+    # 首轮拉清单不算「变化」：平台 setup 用的就是同一份数据，实体早已建好
+    first_refresh_done = False
+
     async def _central_refresh(_now=None):
+        nonlocal first_refresh_done
+        data = hass.data[DOMAIN_DATA][entry]
+        # 自动同步：ESXi 上新建/删除/改名虚拟机后，HA 侧不会自己多出或消失实体
+        #   （实体只在各平台 setup 时创建一次）。这里每轮拉完数据比一下 VM 键集合，
+        #   变了就排一次同步，省得用户去手动重载集成。
+        vm_before = set(data.get("vm") or {})
         await hass.async_add_executor_job(client.update_data)
+        vm_after = set(data.get("vm") or {})
+        if vm_before == vm_after:
+            return
+        if not first_refresh_done:
+            first_refresh_done = True
+            if not vm_before:
+                return
+
+        appeared = sorted(vm_after - vm_before)
+        gone = sorted(vm_before - vm_after)
+        # ⚠ 整份清单突然全没了，又没有新增：几乎一定是主机不可达 / 权限被收回 /
+        #   连到了别的空 vCenter。绝不能据此删实体，这里连同步都不触发
+        #   （async_sync_entry 内部还有一道同样的守卫，这里再拦一次更保险）。
+        if gone and not appeared and vm_before and not vm_after:
+            _LOGGER.warning(
+                "虚拟机清单从 %s 台变成 0 台，疑似连接或权限异常，本次不自动同步实体",
+                len(vm_before),
+            )
+            return
+
+        _LOGGER.debug("检测到虚拟机清单变化：新增 %s、消失 %s", appeared, gone)
+        async_request_sync(
+            hass, entry,
+            reason=("新增：" + "、".join(appeared[:5])) if appeared
+            else ("移除：" + "、".join(gone[:5])),
+        )
 
     unsub_refresh = async_track_time_interval(
         hass, _central_refresh, timedelta(seconds=MIN_UPDATE_INTERVAL)
@@ -1395,6 +1435,8 @@ async def async_unload_entry(hass, config_entry):
                 event_hub.stop()
             for key in (HUB_KEY, "aggregate_entity", "screenshot_local_ok"):
                 entry_data.pop(key, None)
+        # 取消还没跑的自动同步（它会在 entry 卸载后去调已失效的平台钩子）
+        cancel_auto_sync(hass, config_entry.entry_id)
         # 清掉各平台登记的同步钩子（重载后它们会指向已卸载的实体平台）
         clear_platform_hooks(hass, config_entry.entry_id)
         _LOGGER.info("Successfully removed the ESXi Control integration")

@@ -69,6 +69,7 @@ from .const import (
 )
 from .esxi import acquire_console_ticket, ignore_ssl_verify
 from .cdrom_ops import upload_and_mount, eject_iso
+from .entity_sync import async_request_sync
 from . import vm_admin_ops
 from .guest_ops import GuestOpsError
 from . import guest_router
@@ -2103,6 +2104,12 @@ async def _admin_run_batch(hass, entry_id, job_id, conn_details, host_key,
         job["done"] += 1
     job["state"] = "canceled" if job.get("cancel") else "done"
     await refresh_data_now(hass, entry_id)
+    # 批量创建改变了 VM 清单：丢弃缓存，管理页下一次拉取立刻拿到最新列表
+    vm_admin_ops.invalidate_inventory(conn_details)
+    # 新建出来的虚拟机要马上在 HA 里出现（实体只在平台 setup 时建过一次），
+    #   排一次同步，省得用户手动重载集成
+    async_request_sync(hass, entry_id, delay=2.0,
+                       reason=f"管理页批量创建（{len(names)} 台）")
 
 
 class AdminPageView(HomeAssistantView):
@@ -2216,6 +2223,22 @@ class AdminApiView(HomeAssistantView):
             return await self._create_batch(
                 hass, request, entry_id, conn_details, host_key, payload)
 
+        if op == "browse_datastore":
+            ds_name = str(payload.get("ds") or "").strip()
+            ds_path = str(payload.get("path") or "").strip().strip("/")
+            if not ds_name:
+                return web.json_response({"error": "缺少数据存储名称"},
+                                         status=400)
+            try:
+                data = await hass.async_add_executor_job(
+                    vm_admin_ops.browse_datastore, conn_details, ds_name,
+                    ds_path, host_key)
+            except Exception as exc:  # pylint: disable=broad-except
+                _LOGGER.warning("浏览数据存储失败：%s", exc)
+                return web.json_response({"error": str(exc)}, status=400)
+            return web.json_response(
+                data, headers={"Cache-Control": "no-store"})
+
         # 以下为单机即时操作
         moid = str(payload.get("moid") or "")
         if not moid:
@@ -2242,7 +2265,14 @@ class AdminApiView(HomeAssistantView):
         except Exception as exc:  # pylint: disable=broad-except
             _LOGGER.warning("虚拟机管理操作 %s 失败：%s", op, exc)
             return web.json_response({"error": str(exc)}, status=400)
+        # 改配 / 删档会改变清单内容：丢弃缓存，保证前端随后的刷新拿到新数据
+        vm_admin_ops.invalidate_inventory(conn_details, host_key)
         await refresh_data_now(hass, entry_id)
+        # 删除掉的虚拟机在 HA 里会留下一堆空壳实体（数据没了，实体还在），
+        #   排一次同步把它们摘掉，省得用户手动重载集成
+        if op == "delete":
+            async_request_sync(hass, entry_id, delay=2.0,
+                               reason="管理页删除虚拟机")
         return web.json_response({"ok": True, "result": result})
 
     async def _create_batch(self, hass, request, entry_id, conn_details,

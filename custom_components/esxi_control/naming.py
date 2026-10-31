@@ -140,19 +140,6 @@ HOST_DETAIL_KINDS = ("health", "services", "network", "firewall", "sessions", "s
 AGGREGATE_ENTITY_ID = "sensor.esxi_all_entities"
 
 
-def _short_host_name(raw, host_slugs):
-    """把完整主机名 / 主机键替换成短名；不在映射里就原样返回。"""
-    if not raw:
-        return raw
-    if raw in (host_slugs or {}):
-        return host_slugs[raw]
-    # 复合片段（如 localhost_localdomain_license）时替换前缀部分
-    for full, short_name in (host_slugs or {}).items():
-        if raw == full or raw.startswith(f"{full}_"):
-            return short_name + raw[len(full):]
-    return raw
-
-
 def _join(domain, name, suffix):
     """Build "${domain}.${name}_${suffix}"，名字拿不到 slug 时放弃。"""
     slug = slugify(name)
@@ -197,23 +184,15 @@ def suggested_entity_id(domain, entry_id, unique_id, host_slugs=None):
 
     def short_host(raw):
         """把完整主机名替换成短名。"""
-        return _short_host_name(raw, host_slugs)
-
-    def host_singleton():
-        """主机级单例实体（「事件」等）用的主机短名。
-
-        这类实体的 unique_id 形如 ``{config_host}_{entry_id}_events`` ——
-        ESXi 主机名不在里面（只有配置里填的主机地址）。所以先从 ``entry_id``
-        之前的前缀取；配置地址是 IP 拿不到短名时，单主机场景直接用那台主机的
-        短名兜底，保证与同设备下的 ``sensor.<host>_health`` 等风格一致。
-        """
-        prefix = unique_id.split(f"{entry_id}_", 1)[0].strip("_")
-        mapped = short_host(prefix)
-        if mapped and mapped != prefix:
-            return mapped
-        if len(host_slugs or {}) == 1:
-            return next(iter(host_slugs.values()))
-        return slugify(prefix) or None
+        if not raw:
+            return raw
+        if raw in (host_slugs or {}):
+            return host_slugs[raw]
+        # 复合片段（如 localhost_localdomain_license）时替换前缀部分
+        for full, short_name in (host_slugs or {}).items():
+            if raw == full or raw.startswith(f"{full}_"):
+                return short_name + raw[len(full):]
+        return raw
 
     if rest == "entities_aggregate" or rest.endswith("_entities_aggregate"):
         # 「实体聚合」：固定 id，且**不随短 id 总开关变化**
@@ -240,24 +219,10 @@ def suggested_entity_id(domain, entry_id, unique_id, host_slugs=None):
         # 批量操作日志 → sensor.operation_log
         return f"{domain}.operation_log"
 
-    if rest == "events" or rest.endswith("_events"):
-        # 事件流传感器 → sensor.<host>_events
-        #   unique_id 形如 {config_host}_{entry_id}_events：主机名不在 rest 里，
-        #   由 host_singleton() 从前缀解析（与同设备的 sensor.<host>_health 对齐）
-        return _join(domain, host_singleton(), "events")
-
     if rest.startswith("all_vms_"):
         # 整机批量实体：switch.all_vms_power / switch.all_vms_screenshot /
         #   button.all_vms_snapshot / button.all_vms_restart
         return f"{domain}.all_vms_{rest[len('all_vms_'):]}"
-
-    # ⚠️ 必须放在 ``vm_`` 分支之前：``vm_manager_url_<host>`` 同样以 vm_ 开头，
-    #    被下面的 VM 分支吞掉就永远拿不到短 id（只剩 HA 生成的长拼音）。
-    if rest.startswith("vm_manager_url_"):
-        # vm_manager_url_{host} → sensor.<host>_vm_manager
-        return _join(
-            domain, short_host(rest[len("vm_manager_url_"):]), "vm_manager"
-        )
 
     if rest.startswith("vm_"):
         tail = rest[3:]
@@ -347,6 +312,12 @@ def suggested_entity_id(domain, entry_id, unique_id, host_slugs=None):
         for kind in HOST_DETAIL_KINDS:
             if tail.startswith(kind + "_"):
                 return _join(domain, short_host(tail[len(kind) + 1:]), kind)
+
+    if rest.startswith("vm_manager_url_"):
+        # vm_manager_url_{host} → sensor.<host>_vm_manager
+        return _join(
+            domain, short_host(rest[len("vm_manager_url_"):]), "vm_manager"
+        )
 
     if rest.startswith("select_power_policy_"):
         return _join(

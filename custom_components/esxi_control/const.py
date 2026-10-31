@@ -55,7 +55,7 @@ REQUIRED_FILES = [
     "www_admin/index.html",
     "www_guest/index.html",
 ]
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # 实体同步完成后广播的事件：控制台设备链接等外围功能靠它在 VM 增删后跟进
 EVENT_ENTRY_SYNCED = "esxi_control_synced"

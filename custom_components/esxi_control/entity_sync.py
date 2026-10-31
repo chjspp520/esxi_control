@@ -8,18 +8,24 @@
 * 新虚拟机永远看不见（连数据都拉回来了，只是没有任何实体承载它）；
 * 删掉的虚拟机反而会一直挂着（更糟：残留的键让它继续读到删除前的旧值）。
 
-这里提供**显式触发**的同步（service ``esxi_control.sync``）：
+这里提供一次完整的同步（service ``esxi_control.sync`` / 「同步实体」按钮）：
 
 1. 强制刷新一次 ESXi 数据（绕过 ``update_data`` 的 45 秒节流）；
 2. 让各平台重新算出「此刻应该存在的实体清单」；
 3. 只把**缺失的**实体 add 进去（``unique_id`` 已存在的绝不重复创建）；
 4. 数据刷新成功时，把注册表里已经不该存在的实体删掉，并顺手清空壳设备。
 
-为什么是「手动」而不是「自动」
-------------------------------
+手动 vs 自动
+------------
 删除实体不可逆，而且「ESXi 一时连不上 / 权限变化导致列表为空」这类情况会让自动
-逻辑误删整台主机的所有实体。让用户显式点一下，语义清晰，也天然带了一道人肉确认；
-同时这里还额外守一道：**只有数据刷新确实成功**才执行删除。
+逻辑误删整台主机的所有实体。所以最初只提供**手动**触发（service / 按钮）。
+
+后来补了 :func:`async_request_sync`（见文件末尾）：由「虚拟机清单发生变化」和
+「管理页新建/删除虚拟机」自动触发，但**仍然复用本函数里的全部安全守卫**：
+
+* 只有数据刷新确实成功（``client.last_update_ok``）才允许删除；
+* 刷新成功却一台主机/虚拟机都没有，而注册表里还有实体 → 判定为异常，只新增不删除；
+* 自动触发侧再补一道：整份 VM 清单突然全部消失且没有新增 → 直接不触发同步。
 """
 import asyncio
 import logging
@@ -40,6 +46,13 @@ _LOGGER = logging.getLogger(__name__)
 
 #: 各平台登记「如何算出实体清单 + 如何添加实体」的键
 HOOKS_KEY = "sync_hooks"
+
+#: 自动同步的合并窗口（秒）：清单变化可能被连续好几个 tick 观察到，
+#: 也常常一次变化牵出多个键（改名 = 旧键消失 + 新键出现），统一延迟一小段再跑。
+AUTO_SYNC_DEBOUNCE = 5.0
+
+#: 已排队但还没跑的自动同步任务，存在 ``hass.data[DOMAIN_DATA][entry_id]`` 里
+AUTO_SYNC_KEY = "auto_sync_task"
 
 
 def register_platform(hass, entry_id, platform, build_entities, add_entities):
@@ -258,3 +271,63 @@ async def async_sync_entry(hass, entry):
     hass.bus.async_fire(EVENT_ENTRY_SYNCED, {"entry_id": entry_id, "domain": DOMAIN})
 
     return result
+
+
+def async_request_sync(hass, entry_id, delay=AUTO_SYNC_DEBOUNCE, reason=""):
+    """请求一次**自动**同步；窗口内重复请求合并成一次。
+
+    与 :func:`async_sync_entry` 的区别：这个是「发个请求就返回」，真正的同步
+    延迟 ``delay`` 秒后在后台跑，不阻塞调用方（HTTP 视图 / 定时器回调）。
+
+    ⚠️ 必须在**事件循环**里调用。``EsxiStats._update_data()`` 跑在 executor
+    线程里，那里要用 ``hass.loop.call_soon_threadsafe`` 包一层。
+
+    合并策略：窗口内已有排队任务就直接忽略新请求 —— 这样「第一次变化」开始计时，
+    连着变化不会把同步无限往后推。
+    """
+    entry_data = (hass.data.get(DOMAIN_DATA) or {}).get(entry_id)
+    if entry_data is None:
+        return False
+
+    pending = entry_data.get(AUTO_SYNC_KEY)
+    if pending is not None and not pending.done():
+        return False
+
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        return False
+    # 平台还没登记钩子时同步也做不了什么（新建/删除都算不出来），等 setup 跑完再说
+    if not (entry_data.get(HOOKS_KEY) or {}):
+        return False
+
+    async def _delayed():
+        await asyncio.sleep(delay)
+        try:
+            res = await async_sync_entry(hass, entry)
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("自动同步实体失败（%s）", reason or "未注明原因")
+            return
+        _LOGGER.info(
+            "自动同步实体（%s）：新增 %s 个，移除 %s 个（%s）",
+            reason or "未注明原因", res.get("added"), res.get("removed"),
+            res.get("reason") or "正常",
+        )
+
+    def _clear(task):
+        if entry_data.get(AUTO_SYNC_KEY) is task:
+            entry_data.pop(AUTO_SYNC_KEY, None)
+
+    task = hass.async_create_task(_delayed())
+    entry_data[AUTO_SYNC_KEY] = task
+    task.add_done_callback(_clear)
+    return True
+
+
+def cancel_auto_sync(hass, entry_id):
+    """取消还没执行的自动同步（卸载 / 重载时调用）。"""
+    entry_data = (hass.data.get(DOMAIN_DATA) or {}).get(entry_id)
+    if entry_data is None:
+        return
+    task = entry_data.pop(AUTO_SYNC_KEY, None)
+    if task is not None and not task.done():
+        task.cancel()

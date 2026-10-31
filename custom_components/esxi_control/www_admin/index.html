@@ -5,18 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>虚拟机管理 · __HOST_NAME__</title>
 <style>
+  /* 配色与房间精灵「ESXi 虚拟化卡片」同源：
+     teal 主色（#26a69a / #00897b）+ 浅色底 —— 卡片里以 iframe 嵌入时看着是同一套 UI。
+     改这里就等于改整页配色，下面所有规则都只引用这些变量。 */
   :root {
-    --bg: #11151c;
-    --panel: #202a38;
-    --panel2: #2a3646;
-    --line: #33425a;
-    --text: #e6edf3;
-    --muted: #8b98a9;
-    --accent: #58a6ff;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --danger: #f85149;
-    --tpl: #bc8cff;
+    color-scheme: light;
+    --bg: #fbfcfc;
+    --panel: #ffffff;
+    --panel2: #f2f7f7;
+    --line: rgba(0, 0, 0, 0.1);
+    --text: #1a1a1a;
+    --muted: #7f8a8a;
+    --accent: #26a69a;
+    --accent-dark: #00897b;
+    --accent-weak: rgba(38, 166, 154, 0.12);
+    --ok: #4caf50;
+    --warn: #ff9800;
+    --danger: #e53935;
+    --tpl: #7e57c2;
+    /* 刘海/灵动岛安全区。默认 0，只有「添加到主屏」的全屏模式下才取真实值，
+       原因见下面 @media (display-mode: standalone) 的注释。 */
+    --sat: 0px;
+    --sab: 0px;
+  }
+  /* iOS 的坑：页面被外层 WebView / App（如 HA 客户端、内嵌 iframe）打开时，
+     env(safe-area-inset-top) 依然会返回刘海高度（iPhone 上 44~59px），
+     但外层其实已经让出过这块空间 —— 叠加到头部就成了顶部一大片空白；
+     PC 上 env() 恒为 0，所以只有 iOS 看起来异常。
+     正确做法：只在真正独立全屏（主屏快捷方式）时才吃安全区。 */
+  @media (display-mode: standalone), (display-mode: fullscreen) {
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+    }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -27,21 +48,21 @@
   }
   button, input, select { font: inherit; }
   button {
-    background: var(--panel2); color: var(--text);
+    background: var(--panel); color: var(--text);
     border: 1px solid var(--line); border-radius: 7px;
-    padding: 6px 12px; cursor: pointer; white-space: nowrap;
+    padding: 3px 10px; cursor: pointer; white-space: nowrap;
   }
-  button:hover:not(:disabled) { background: #34425a; border-color: #46587a; }
+  button:hover:not(:disabled) { background: var(--accent-weak); border-color: rgba(38,166,154,.45); color: var(--accent-dark); }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-  button.primary:hover:not(:disabled) { background: #388bfd; }
-  button.danger { color: #ffd7d4; border-color: rgba(248,81,73,.5); }
-  button.danger:hover:not(:disabled) { background: rgba(248,81,73,.18); }
-  button.tpl { color: #e4d4ff; border-color: rgba(188,140,255,.5); }
-  button.tpl.on { background: rgba(188,140,255,.18); }
+  button.primary { background: linear-gradient(135deg, #26a69a, #00897b); border-color: transparent; color: #fff; box-shadow: 0 2px 8px rgba(38,166,154,.35); }
+  button.primary:hover:not(:disabled) { background: linear-gradient(135deg, #2bb3a5, #00988a); color: #fff; }
+  button.danger { color: var(--danger); border-color: rgba(229,57,53,.45); }
+  button.danger:hover:not(:disabled) { background: rgba(229,57,53,.1); }
+  button.tpl { color: var(--tpl); border-color: rgba(126,87,194,.45); }
+  button.tpl.on { background: rgba(126,87,194,.12); }
   button.sm { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
   input[type=text], input[type=number], input[type=search], select {
-    background: #0d1117; color: var(--text);
+    background: var(--panel); color: var(--text);
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
     min-width: 0;
   }
@@ -50,13 +71,13 @@
 
   header {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 10px 14px; background: var(--panel);
+    padding: 10px 14px; background: var(--panel2);
     border-bottom: 1px solid var(--line);
-    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-top: calc(10px + var(--sat));
     flex: 0 0 auto;
   }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; min-width: 0; }
-  header .host { color: var(--accent); }
+  header .host { color: var(--accent-dark); }
   .spacer { flex: 1; }
   #hostinfo { color: var(--muted); font-size: 12.5px; margin-left: auto;
     min-width: 0; }
@@ -81,22 +102,22 @@
   th { color: var(--muted); font-weight: 600; font-size: 12px;
     background: var(--panel2); white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
-  tr:hover td { background: rgba(88,166,255,.05); }
+  tr:hover td { background: rgba(38,166,154,.06); }
   .name-cell { font-weight: 600; }
   .muted { color: var(--muted); font-size: 12px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 6px; }
-  .dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(63,185,80,.7); }
-  .dot.off { background: #6e7681; }
-  .dot.susp { background: var(--warn); box-shadow: 0 0 6px rgba(210,153,34,.7); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(76,175,80,.55); }
+  .dot.off { background: #9e9e9e; }
+  .dot.susp { background: var(--warn); box-shadow: 0 0 6px rgba(255,152,0,.55); }
   .dot.invalid { background: var(--danger); }
   .badge { display: inline-block; font-size: 11px; padding: 1px 7px;
     border-radius: 10px; border: 1px solid var(--line); color: var(--muted);
     margin-left: 4px; vertical-align: middle; }
-  .badge.tpl { color: var(--tpl); border-color: rgba(188,140,255,.55);
-    background: rgba(188,140,255,.1); }
-  .badge.snap { color: var(--warn); border-color: rgba(210,153,34,.55);
-    background: rgba(210,153,34,.1); }
+  .badge.tpl { color: var(--tpl); border-color: rgba(126,87,194,.45);
+    background: rgba(126,87,194,.1); }
+  .badge.snap { color: #d97706; border-color: rgba(255,152,0,.45);
+    background: rgba(255,152,0,.1); }
   .disk-line { font-size: 12px; color: var(--muted); }
   .disk-line .np { color: var(--tpl); }
   .acts { display: flex; gap: 5px; justify-content: flex-end; }
@@ -106,29 +127,31 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   #jobbar.show { display: block; }
   .jobhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .progress { height: 6px; background: #0d1117; border-radius: 3px; overflow: hidden; }
+  .progress { height: 6px; background: rgba(0,0,0,.08); border-radius: 3px; overflow: hidden; }
   .progress > div { height: 100%; background: var(--accent); width: 0;
     transition: width .3s; }
+  .progress > div.done { background: var(--ok); }
+  .progress > div.err { background: var(--danger); }
   .jobitems { margin-top: 6px; max-height: 130px; overflow: auto;
     font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
   .jobitems .err { color: var(--danger); white-space: pre-wrap; }
 
   /* 弹窗 */
   #mask { display: none; position: fixed; inset: 0; z-index: 50;
-    background: rgba(0,0,0,.55); }
+    background: rgba(15,23,23,.38); }
   #mask.show { display: block; }
   .modal { position: fixed; z-index: 51; left: 50%; top: 50%;
     transform: translate(-50%,-50%); width: min(680px, 94vw); max-height: 92vh;
-    display: none; flex-direction: column; background: var(--bg);
+    display: none; flex-direction: column; background: var(--panel);
     border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
-    box-shadow: 0 14px 48px rgba(0,0,0,.55); }
+    box-shadow: 0 14px 44px rgba(0,0,0,.28); }
   .modal.show { display: flex; }
   .modal.wide { width: min(780px, 96vw); }
-  .modal-h { padding: 12px 16px; background: var(--panel);
+  .modal-h { padding: 12px 16px; background: var(--panel2);
     border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14.5px;
     display: flex; align-items: center; }
   .modal-b { padding: 14px 16px; overflow: auto; }
-  .modal-f { padding: 10px 16px; background: var(--panel);
+  .modal-f { padding: 10px 16px; background: var(--panel2);
     border-top: 1px solid var(--line); display: flex; gap: 8px;
     justify-content: flex-end; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
@@ -140,25 +163,42 @@
   .radio-row label { display: inline-flex; align-items: center; gap: 5px;
     color: var(--text); cursor: pointer; }
   .hint { color: var(--muted); font-size: 12px; }
-  .hint.warn { color: var(--warn); }
+  .hint.warn { color: #d97706; }
   .hint.danger { color: var(--danger); }
   .hr { border-top: 1px solid var(--line); margin: 12px 0; }
-  .sub-title { font-size: 12.5px; color: var(--accent); font-weight: 600;
+  .sub-title { font-size: 12.5px; color: var(--accent-dark); font-weight: 600;
     margin-bottom: 6px; }
+  /* 「新建虚拟机」里的区块标题：只在移动端显示（桌面端是平铺长表单，没有区块概念） */
+  .m-sec-h { display: none; }
+  /* 数据存储浏览器顶部的路径面包屑：[存储] / 一级 / 二级（末级为当前目录） */
+  .crumb { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    font-size: 12.5px; }
+  .crumb .sep { color: var(--muted); }
+  .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .crumb a:hover { text-decoration: underline; }
+  .crumb .cur { color: var(--text); font-weight: 600; }
   .mini-list { border: 1px solid var(--line); border-radius: 8px; }
   .mini-list .row { display: flex; align-items: center; gap: 8px;
     padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .mini-list .row:last-child { border-bottom: none; }
   .mini-list .grow { flex: 1; min-width: 0; }
-  .disc-info { background: #0d1117; border: 1px solid var(--line);
+  /* 桌面端：标题与属性同一行，用 " · " 分隔（移动端属性另起一行，见媒体查询） */
+  .mini-list .row .grow .muted::before { content: " · "; }
+
+  /* 「添加硬盘 / 添加网卡」的折叠开关：
+     桌面端不显示开关，控件仍以 display:contents 直接排在 .add-row 里（布局与原来一致）；
+     移动端才把开关显示出来、把控件收进 .add-row-body 里默认折叠。 */
+  .add-row-toggle { display: none; }
+  .add-row-body { display: contents; }
+  .disc-info { background: var(--panel2); border: 1px solid var(--line);
     border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: var(--muted); }
   .disc-info b { color: var(--text); }
   #toast { position: fixed; z-index: 80; left: 50%; bottom: 24px;
     transform: translateX(-50%); display: none; max-width: 80%;
-    background: #2b3340; border: 1px solid var(--line); border-radius: 8px;
-    padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
-  #toast.err { border-color: rgba(248,81,73,.6); }
-  #toast.ok { border-color: rgba(63,185,80,.6); }
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.18); }
+  #toast.err { border-color: rgba(229,57,53,.5); }
+  #toast.ok { border-color: rgba(76,175,80,.5); }
 
   /* ================= 移动端适配 ================= */
   @media (max-width: 760px) {
@@ -167,118 +207,312 @@
 
     /* 头部：标题 + 操作同一行，主机信息压成一行（点击展开） */
     header {
-      flex-wrap: wrap; gap: 6px 8px;
-      padding: 7px 10px; padding-top: calc(7px + env(safe-area-inset-top));
+      flex-wrap: wrap; gap: 2px 8px;
+      padding: 7px 10px; padding-top: calc(7px + var(--sat));
     }
-    header h1 { flex: 1 1 auto; font-size: 14px;
+    header h1 { flex: 1 1 auto; font-size: 11px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hdr-acts { margin-left: auto; gap: 6px; }
     .act-lbl, .act-full { display: none; }
     .act-ico { display: inline-flex; }
     .act-short { display: inline; }
     #hostinfo {
-      order: 3; flex: 1 1 100%; margin-left: 0; font-size: 11.5px;
+      order: 3; flex: 1 1 100%; margin-left: 0; font-size: 10.5px;  /* 原来是 10x，写错了 → 该行字号其实一直没生效 */
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       cursor: pointer;
     }
     #hostinfo.expand { white-space: normal; overflow: visible; text-overflow: clip; }
 
     main { padding: 0 8px 16px; }
-    .toolbar { position: sticky; top: 0; z-index: 5; gap: 6px;
-      padding: 8px 0; margin-bottom: 2px; background: var(--bg); }
-    .toolbar input[type=search] { width: auto; flex: 1 1 auto;
-      padding: 7px 10px; border-radius: 9px; }
-    #list-status { font-size: 11.5px; white-space: nowrap; }
+    /* 搜索条：白底胶囊 + 内嵌放大镜，聚焦描边转 teal；
+       工具栏背景左右铺满（负边距），滚动时卡片不会从两侧缝里露出来。 */
+    .toolbar {
+      position: sticky; top: 0; z-index: 5;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+      margin: 0 -8px 4px; padding: 8px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line);
+    }
+    .toolbar input[type=search] {
+      flex: 1 1 60%; width: auto; min-width: 0;
+      height: 38px; padding: 0 12px 0 34px;
+      border-radius: 10px; border: 1px solid var(--line);
+      background-color: var(--panel);
+      /* 放大镜（data URI 里 #8a9393 = --muted） */
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%238a9393'%3E%3Cpath d='M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: 11px center;
+      background-size: 15px 15px;
+    }
+    .toolbar input[type=search]:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-weak);
+    }
+    /* 计数：窄屏时跟在搜索框右边，放不下就整体换到下一行（不挤压输入框） */
+    #list-status { flex: 0 0 auto; font-size: 11px; white-space: nowrap;
+      color: var(--muted); }
 
-    /* 表格转卡片列表 */
-    table, thead, tbody, tr, td { display: block; }
+    /* ===== 表格转卡片：tr 变成两列网格 =====
+       ① 标题行：名称 + 徽标 + 客户机系统名（跨两列，右侧留出电源胶囊位置）
+       ② 指标格 2 列：CPU·内存 | 网卡（淡底圆角小块，标签一行、值一行）
+       ③ 硬盘：常有多块 / 名称长，独占一整行
+       ④ 操作行：一条分割线 + 三个等宽按钮（跨两列）
+       电源状态胶囊绝对定位在右上角，不参与网格布局。 */
+    table, thead, tbody, td { display: block; }
     table { border: none; background: transparent; border-radius: 0;
       overflow: visible; }
     thead { display: none; }
-    tr { position: relative; background: var(--panel); border: 1px solid var(--line);
-      border-radius: 12px; padding: 10px 12px 0; margin-bottom: 10px; }
-    tr:hover td { background: transparent; }
+    tr {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 8px; row-gap: 8px;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 11px 12px; margin-bottom: 10px;
+    }
     td { border: none; padding: 0; }
+    /* 桌面端那条 tr:hover td（teal 6% 底）在卡片模式里会把指标格底色冲掉 ——
+       非指标格保持透明，指标格保持自己的淡底 */
+    tr:hover td { background: transparent; }
+    tr:hover td[data-label] { background: var(--panel2); }
 
-    /* 标题行：名称 + 徽标 + 系统名（右侧留出状态胶囊位置） */
-    .name-cell { font-size: 14.5px; padding: 0 76px 9px 0;
-      border-bottom: 1px solid var(--line); }
-    .name-cell .muted { margin-top: 2px; }
+    /* ① 标题行：名称 + 徽标 + 系统名，下面一条分割线把标题与指标格分开 */
+    .name-cell {
+      grid-column: 1 / -1; order: 1;
+      font-size: 13.5px;
+      padding: 0 78px 8px 0;              /* 右侧留出电源胶囊的位置 */
+      border-bottom: 1px solid var(--line);
+    }
+    .name-cell .muted { margin-top: 3px; font-size: 11px; }
 
-    /* 属性行：左标签（绝对定位，兼容状态点/多行硬盘等任意结构） */
-    td[data-label] { position: relative; padding: 5px 0 5px 5em; }
+    /* ② 指标格：标签在上、值在下，每格一块淡底圆角 */
+    td[data-label] {
+      order: 2;
+      padding: 7px 9px 8px;
+      background: var(--panel2);
+      border-radius: 9px;
+      font-size: 12px; line-height: 1.45;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
     td[data-label]::before {
-      content: attr(data-label); position: absolute; left: 0; top: 5px;
-      width: 4.6em; color: var(--muted); font-size: 12px; line-height: 1.6;
+      content: attr(data-label); display: block;
+      color: var(--muted); font-size: 10.5px; line-height: 1.5;
+      margin-bottom: 1px;
     }
     tr > td[data-label="系统"] { display: none; }  /* 与标题下的系统名重复，窄屏省略 */
+
+    /* CPU·内存 与 网卡 同一行；硬盘独占一行（可能多块、名字长） */
+    td[data-label="网卡"] { order: 3; }
+    td[data-label="硬盘"] { order: 4; grid-column: 1 / -1; }
+
+    /* CPU·内存：核数与内存合成一行「4 核 · 8192 MB」——
+       原来内存是块级 div，会占第二行，把半宽格子的高度撑起来、
+       和右边单行的「网卡」也不齐；并成一行后两格高度一致、卡片更紧凑。
+       只在移动端并（display:inline），桌面端表格里仍分两行。 */
+    td[data-label="CPU·内存"] .muted {
+      display: inline;
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    td[data-label="CPU·内存"] .muted::before {
+      content: "·";
+      margin: 0 5px;
+      color: var(--muted);
+    }
 
     /* 电源状态 → 右上角胶囊（带状态色，不支持 :has 时退化为中性胶囊）
        注意：必须排在通用 td[data-label] 之后，且用 tr > 提高权重，
        因为 [attr=value] 与 [attr] 的优先级相同。 */
     tr > td[data-label="电源"] {
-      position: absolute; top: 9px; right: 10px; left: auto;
+      position: absolute; top: 10px; right: 12px; left: auto;
       display: inline-flex; align-items: center;
       padding: 3px 9px 3px 8px; border: 1px solid var(--line);
-      border-radius: 999px; font-size: 11.5px; line-height: 1.45;
-      color: var(--text); background: rgba(255,255,255,.04);
+      border-radius: 999px; font-size: 11px; line-height: 1.45;
+      color: var(--text); background: rgba(0,0,0,.03);
     }
     tr > td[data-label="电源"]::before { content: none; }
     tr > td[data-label="电源"] .dot { margin-right: 5px; }
     tr > td[data-label="电源"]:has(.dot.on) {
-      color: var(--ok); border-color: rgba(63,185,80,.45);
-      background: rgba(63,185,80,.1); }
+      color: #2e7d32; border-color: rgba(76,175,80,.45);
+      background: rgba(76,175,80,.1); }
     tr > td[data-label="电源"]:has(.dot.susp) {
-      color: var(--warn); border-color: rgba(210,153,34,.45);
-      background: rgba(210,153,34,.1); }
+      color: #d97706; border-color: rgba(255,152,0,.45);
+      background: rgba(255,152,0,.1); }
     tr > td[data-label="电源"]:has(.dot.invalid) {
-      color: var(--danger); border-color: rgba(248,81,73,.45);
-      background: rgba(248,81,73,.1); }
+      color: var(--danger); border-color: rgba(229,57,53,.45);
+      background: rgba(229,57,53,.1); }
     .disk-line { color: var(--text); }
-    .disk-line + .disk-line { margin-top: 2px; }
+    .disk-line + .disk-line { margin-top: 3px; }
 
-    /* 操作栏：一条分割线 + 等宽按钮 */
-    td:last-child:not([colspan]) { margin-top: 5px; padding: 9px 0 10px;
-      border-top: 1px solid var(--line); }
-    .acts { display: flex; gap: 6px; margin: 0; }
-    .acts button { flex: 1 1 0; min-width: 0; padding: 7px 6px; font-size: 12.5px; }
-
-    /* 编辑弹窗：硬盘/网卡条目 → 各自一张小卡片 */
-    .mini-list { border: none; border-radius: 0; }
-    .mini-list .row {
-      display: flex; flex-wrap: wrap; gap: 5px 14px; align-items: center;
-      background: var(--panel2); border: 1px solid var(--line);
-      border-radius: 10px; padding: 9px 10px; margin-bottom: 7px;
+    /* ④ 操作行：一条分割线 + 三个等宽按钮 */
+    td:last-child:not([colspan]) {
+      order: 5; grid-column: 1 / -1;
+      padding-top: 9px; border-top: 1px solid var(--line);
     }
-    .mini-list .row:last-child { border-bottom: 1px solid var(--line);
-      margin-bottom: 0; }
-    .mini-list .row .grow { flex: 1 1 100%; font-size: 13.5px; min-width: 0; }
-    .mini-list .row label { display: flex; align-items: center; gap: 7px;
-      min-height: 32px; min-width: 0; color: var(--text); }
-    .mini-list .row label.resize { flex: 1 1 100%; }  /* 扩容到 → 独占一行 */
-    .mini-list .row label input[type=checkbox] { width: 17px; height: 17px;
-      flex: 0 0 auto; accent-color: var(--accent); }
-    .mini-list .row .resize-gb { width: 88px; }
-    .mini-list .row .edit-pg { flex: 1 1 60%; width: auto; max-width: none; }
+    .acts { display: flex; gap: 6px; margin: 0; }
+    .acts button { flex: 1 1 0; min-width: 0; padding: 8px 6px; font-size: 11.5px; }
 
-    /* 加盘/加网卡：虚线框 + 标题，控件分两行铺满 */
-    .add-row { padding: 9px 10px; border: 1px dashed var(--line);
-      border-radius: 10px; }
-    .add-row::before { content: attr(data-label); flex: 0 0 100%;
-      color: var(--muted); font-size: 12px; margin-bottom: 1px; }
-    #e-addpg, #e-addds { min-width: 100%; }
-    #e-addsize, #e-addprov, #e-addnictype { flex: 1 1 auto; width: auto; }
-    #e-adddisk, #e-addnic { min-height: 34px; }
+    /* 「加载中 / 没有匹配的虚拟机」那一行：colspan 单元格要跨满整行 */
+    td[colspan] { grid-column: 1 / -1; text-align: center; padding: 20px 0; }
+
+    /* ===== 编辑硬件 / 新建 弹窗：硬盘、网卡 → **一块区域**显示 =====
+       原来是「每台一张卡」（各自一圈边框 + 外边距 + 三段留白），两个硬盘就要 220px。
+       改成一个外框容器 + 内部行式排列（行间细线），每项两行：
+         ① 名称 · 灰色属性（同一行）
+         ② 扩容输入框 + 危险操作（同一行，放不下自动换行）
+       两个硬盘约 120px，且读起来像一张列表而不是一堆卡片。 */
+    .mini-list {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .mini-list .row {
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 5px 10px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .mini-list .row:last-child { border-bottom: none; }
+
+    /* ① 名称 + 属性同一行（" · " 分隔符沿用桌面端那条规则） */
+    .mini-list .row .grow {
+      flex: 1 1 100%;
+      font-size: 12.5px; font-weight: 600;
+      min-width: 0; overflow-wrap: anywhere;
+    }
+    .mini-list .row .grow .muted { font-size: 11px; font-weight: 400; }
+
+    /* ② 扩容输入框 + 两个危险操作排一行；窄屏放不下就换行，不会撑破 */
+    .mini-list .row label.resize {
+      flex: 0 1 auto;
+      color: var(--text); font-size: 11.5px;
+    }
+    .mini-list .row .resize-gb { width: 84px; height: 30px; text-align: right; }
+    #e-nics .row .edit-pg { flex: 1 1 160px; width: auto; min-width: 0; height: 32px; }
+
+    .mini-list .row label {
+      display: flex; align-items: center; gap: 6px;
+      min-height: 26px; min-width: 0;
+      font-size: 11.5px; color: var(--muted);
+    }
+    .mini-list .row label input[type=checkbox] {
+      width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--accent); }
+    /* 删除类整体染危险色，避免误点 */
+    #e-disks .row label:has(.rm-disk),
+    #e-disks .row label:has(.rm-file),
+    #e-nics .row label:has(.rm-nic) { color: var(--danger); }
+
+    /* 加盘 / 加网卡：**默认折叠**，点标题才展开（卡片本来就长，别一进来就堆一堆控件）。
+       折叠态 = 一条虚线按钮；展开态 = 标题 + 两列网格（容量 | 精简），存储与提交按钮各占整行。 */
+    .add-row {
+      display: block !important;             /* 顶掉 HTML 里的内联 display:flex */
+      padding: 0 !important;
+      border: 1px dashed var(--line); border-radius: 10px;
+    }
+    .add-row::before { content: none; }      /* 标题改由 .add-row-toggle 承担 */
+    .add-row-toggle {
+      display: flex; align-items: center; gap: 6px;
+      width: 100%; box-sizing: border-box;
+      padding: 10px; border: 0; border-radius: 10px;
+      background: none; color: var(--accent-dark);
+      font-size: 12.5px; font-weight: 600; text-align: left;
+    }
+    .add-row-toggle .chev {
+      margin-left: auto; font-size: 11px; line-height: 1;
+      transition: transform .2s ease;
+    }
+    .add-row.open .add-row-toggle {
+      border-bottom: 1px dashed var(--line); border-radius: 10px 10px 0 0;
+    }
+    .add-row.open .add-row-toggle .chev { transform: rotate(180deg); }
+    .add-row-body { display: none; }
+    .add-row.open .add-row-body {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 6px; align-items: center; padding: 9px 10px 10px;
+    }
+    /* 这三个控件在 HTML 里带了内联 width，必须 !important 才能交给网格分配 */
+    .add-row #e-addsize, .add-row #e-addprov, .add-row #e-addnictype {
+      width: auto !important; min-width: 0; }
+    .add-row #e-addds, .add-row #e-addpg, .add-row #e-addnictype {
+      grid-column: 1 / -1; min-width: 0; }
+    .add-row #e-adddisk, .add-row #e-addnic { grid-column: 1 / -1; min-height: 36px; }
+    .add-row #e-addlist, .add-row #e-addniclist { grid-column: 1 / -1; }
+
+    /* ===== 新建虚拟机：四个区块卡片 + 短字段两列 =====
+       原来是一条直下的长表单（十来个字段全靠滚动找），现在：
+       基本信息 / 硬件配置 / 硬盘 / 存储与网络 四块浅底圆角，块内再分两列短字段。 */
+    body { font-size: 12px; }              /* 基准字号 13.5 → 12 */
+    .modal-h { font-size: 13.5px; }
+    .disc-info { font-size: 12px; }
+    #modal-create .modal-b { padding: 10px; }
+    .m-sec .hint { font-size: 11.5px; }
+    .m-sec {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 11px;
+      margin-bottom: 9px;
+    }
+    .m-sec:last-child { margin-bottom: 0; }
+    .m-sec-h {
+      display: block; margin-bottom: 8px;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .2px;
+      color: var(--accent-dark);
+    }
+    /* 区块已经分开了，里面的分割线和重复标题就都省掉 */
+    #modal-create .hr { display: none; }
+    #modal-create .sub-title { display: none; }
+    .m-sec .field { gap: 3px; }
+    .m-sec .field label { font-size: 11px; }
+    .m-sec .grid { gap: 8px 10px; }
+    .m-sec .disc-info { background: var(--panel); }
+
+    /* 单选项做成胶囊：整块可点、选中描边 + 淡 teal 底，比默认小圆点好按 */
+    #modal-create .radio-row { gap: 7px; padding: 0; }
+    #modal-create .radio-row label {
+      flex: 1 1 auto;
+      padding: 7px 10px;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: var(--panel);
+      color: var(--text); font-size: 11.5px;
+    }
+    #modal-create .radio-row label:has(input:checked) {
+      border-color: var(--accent); background: var(--accent-weak);
+      color: var(--accent-dark); font-weight: 600;
+    }
+
+    /* 硬件配置两列的配对顺序：固件|SCSI、CPU|内存（DOM 顺序是按桌面端两列排的，
+       窄屏用 order 重排，桌面端不受影响） */
+    #modal-create .field:has(#c-guest) { order: 0; }
+    #modal-create .field:has(#c-firmware) { order: 1; }
+    #modal-create .field:has(#c-scsi) { order: 2; }
+    #modal-create .field:has(#c-cpu) { order: 3; }
+    #modal-create .field:has(#c-mem) { order: 4; }
+    #modal-create .field:has(#c-nictype) { order: 5; }
+
+    /* 批量命名：前缀独占一行，起始/位数/数量三列并排（原来 2:1:1:1 挤成一团） */
+    #f-batch > div[style] {
+      display: grid !important; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+    }
+    #f-batch #c-prefix { grid-column: 1 / -1; }
+
     #d-confirm { width: 18px; height: 18px; accent-color: var(--accent); }
 
+    /* 弹窗底部：主按钮给 2 份宽度，取消 1 份，主次分明 */
+    .modal-f button.primary { flex: 2 1 0; }
+    /* 「CPU 热添加：… 内存热添加：…⚠ 有快照」这类长提示，行距放宽更好读 */
+    #e-hothint { line-height: 1.7; }
+
     /* 弹窗内文字略放大，长提示更好读 */
-    .modal-b label, .modal-b .hint, .sub-title { font-size: 13px; }
+    .modal-b label, .modal-b .hint, .sub-title { font-size: 12px; }
     .modal-b .hint.warn { line-height: 1.6; }
 
     /* 触控目标放大；输入框 16px 防止 iOS 聚焦缩放 */
-    button.sm { padding: 4px 9px; font-size: 12.5px; }
-    input[type=text], input[type=number], input[type=search], select {
-      font-size: 16px;
+    button.sm { padding: 2px 9px; font-size: 11.5px; }
+    input[type=text], input[type=number], input[type=search], select, textarea {
+      font-size: 11px;
     }
 
     /* 弹窗全屏 */
@@ -287,14 +521,18 @@
       width: 100%; height: 100%; max-height: 100%;
       border: none; border-radius: 0;
     }
-    .modal-h { padding-top: calc(12px + env(safe-area-inset-top)); }
+    .modal-h { padding-top: calc(12px + var(--sat)); }
     .modal-b { padding: 12px; }
     .modal-f { padding: 10px 12px;
-      padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+      padding-bottom: calc(10px + var(--sab)); }
     .modal-f button { flex: 1; padding: 9px 12px; }
+    /* 窄屏默认一列（新建虚拟机那么多字段，两列会挤成一条条）。
+       只有标了 .grid-2 的保持两列：编辑硬件里的「CPU / 内存」并排。 */
     .grid { grid-template-columns: 1fr; gap: 10px; }
+    .grid.grid-2 { grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+    .grid .field.full { grid-column: 1 / -1; }
 
-    #toast { max-width: 92%; bottom: calc(16px + env(safe-area-inset-bottom)); }
+    #toast { max-width: 92%; bottom: calc(16px + var(--sab)); }
   }
 </style>
 </head>
@@ -317,7 +555,7 @@
 <main>
   <div id="jobbar">
     <div class="jobhead">
-      <strong id="job-title">批量任务</strong>
+      <strong id="job-title">任务进度</strong>
       <span id="job-count" class="muted"></span>
       <span class="spacer" style="flex:1"></span>
       <button id="job-cancel" class="sm danger">取消排队</button>
@@ -327,7 +565,8 @@
     <div class="jobitems" id="job-items"></div>
   </div>
   <div class="toolbar">
-    <input type="search" id="filter" placeholder="筛选虚拟机名称…" />
+    <input type="search" id="filter" placeholder="筛选虚拟机名称…"
+      enterkeyhint="search" autocomplete="off" autocorrect="off" />
     <span id="list-status" class="muted"></span>
   </div>
   <table>
@@ -346,6 +585,11 @@
 <div class="modal wide" id="modal-create">
   <div class="modal-h">新建虚拟机</div>
   <div class="modal-b">
+    <!-- 移动端拆成四个区块（基本信息 / 硬件配置 / 硬盘 / 存储与网络）：
+         .m-sec / .m-sec-h 的浅底圆角与区块标题只在媒体查询里生效，
+         桌面端仍是原来的平铺布局（区块标题 display:none） -->
+    <section class="m-sec">
+      <div class="m-sec-h">基本信息</div>
     <div class="grid">
       <div class="field">
         <label>创建方式</label>
@@ -369,7 +613,10 @@
         <div class="hint" id="c-names-preview"></div>
       </div>
     </div>
+    </section>
 
+    <section class="m-sec">
+      <div class="m-sec-h">硬件配置</div>
     <div class="hr"></div>
     <div class="field">
       <label>硬件配置来源</label>
@@ -379,15 +626,15 @@
 
     <div id="c-manual">
       <div class="hr"></div>
-      <div class="grid">
-        <div class="field"><label>客户机操作系统</label><select id="c-guest"></select></div>
+      <div class="grid grid-2">
+        <div class="field full"><label>客户机操作系统</label><select id="c-guest"></select></div>
         <div class="field"><label>固件</label>
           <select id="c-firmware"><option value="bios">BIOS</option>
             <option value="efi">EFI</option></select></div>
         <div class="field"><label>CPU（核）</label><select id="c-cpu"></select></div>
         <div class="field"><label>内存（MB）</label><input type="number" id="c-mem" value="2048" min="32" step="32" /></div>
         <div class="field"><label>SCSI 控制器</label><select id="c-scsi"></select></div>
-        <div class="field"><label>网卡型号</label><select id="c-nictype"></select></div>
+        <div class="field full"><label>网卡型号</label><select id="c-nictype"></select></div>
       </div>
     </div>
 
@@ -395,7 +642,10 @@
       <div class="hr"></div>
       <div class="disc-info" id="c-profile-info"></div>
     </div>
+    </section>
 
+    <section class="m-sec">
+      <div class="m-sec-h">硬盘</div>
     <div class="hr"></div>
     <div class="sub-title">硬盘</div>
     <div id="c-disk-source-manual">
@@ -414,7 +664,7 @@
         <select id="c-attached-disk"></select>
       </div>
     </div>
-    <div class="grid" style="margin-top:8px">
+    <div class="grid grid-2" style="margin-top:8px">
       <div class="field" id="c-size-field"><label>硬盘容量（GB）</label>
         <input type="number" id="c-size" value="40" min="1" step="1" /></div>
       <div class="field" id="c-prov-field"><label>置备类型</label>
@@ -422,17 +672,65 @@
           <option value="thick">Thick 厚置备（延迟置零）</option></select></div>
     </div>
     <div class="hint" id="c-disk-hint"></div>
+    </section>
 
+    <section class="m-sec">
+      <div class="m-sec-h">存储与网络</div>
     <div class="hr"></div>
     <div class="grid">
       <div class="field"><label>数据存储</label><select id="c-ds"></select></div>
       <div class="field"><label>网络（端口组，不建网卡请留空）</label>
         <select id="c-network"><option value="">— 不添加网卡 —</option></select></div>
     </div>
+    </section>
+
+    <section class="m-sec">
+      <div class="m-sec-h">虚拟光驱</div>
+    <div class="hr"></div>
+    <div class="sub-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text);cursor:pointer;font-weight:400;font-size:13px">
+        <input type="checkbox" id="c-iso-on" />
+        <span>创建时挂载 ISO 镜像（光盘开机自动连接）</span>
+      </label>
+    </div>
+    <div id="c-iso-row" style="display:none;margin-top:8px">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="sm" id="c-iso-browse">浏览存储…</button>
+        <span id="c-iso-label" class="hint">未选择镜像</span>
+        <button class="sm danger" id="c-iso-clear" style="display:none">移除</button>
+      </div>
+    </div>
+    </section>
   </div>
   <div class="modal-f">
     <button id="c-cancel">取消</button>
     <button id="c-submit" class="primary">创建</button>
+  </div>
+</div>
+
+<!-- 选择 ISO 镜像（数据存储浏览器） -->
+<div class="modal wide" id="modal-ds">
+  <div class="modal-h">选择 ISO 镜像</div>
+  <div class="modal-b">
+    <div class="grid">
+      <div class="field"><label>数据存储</label><select id="ds-store"></select></div>
+      <div class="field"><label>进入目录</label>
+        <div style="display:flex;gap:8px">
+          <button class="sm" id="ds-up" title="返回上一级">⬅ 上一级</button>
+          <select id="ds-dir" style="flex:1"></select>
+        </div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>当前路径</label>
+      <div id="ds-crumb" class="crumb"></div></div>
+    <div id="ds-status" class="hint" style="margin:8px 0 6px"></div>
+    <div class="mini-list" id="ds-list"
+      style="max-height:320px;overflow:auto"></div>
+    <div class="hint" style="margin-top:8px">在「进入目录」下拉中选择子目录（或点击上方路径跳转）；列表中单击 ISO 文件选中，再点「确定」。</div>
+  </div>
+  <div class="modal-f">
+    <button id="ds-cancel">取消</button>
+    <button id="ds-ok" class="primary" disabled>确定</button>
   </div>
 </div>
 
@@ -441,7 +739,8 @@
   <div class="modal-h">编辑硬件 · <span id="e-title"></span></div>
   <div class="modal-b">
     <div id="e-powerwarn" class="hint warn" style="margin-bottom:8px"></div>
-    <div class="grid">
+    <!-- grid-2：移动端也保持两列（CPU / 内存 并排），其余 .grid 在窄屏仍是一列 -->
+    <div class="grid grid-2">
       <div class="field"><label>CPU（核）</label><select id="e-cpu"></select></div>
       <div class="field"><label>内存（MB）</label><input type="number" id="e-mem" min="32" step="32" /></div>
     </div>
@@ -679,6 +978,9 @@ $("btn-create").addEventListener("click", () => {
   $("c-name").value = ""; $("c-prefix").value = "pc-";
   $("c-start").value = 1; $("c-pad").value = 2; $("c-count").value = 3;
   $("c-profile").value = "";
+  $("c-iso-on").checked = false; createIso = null;
+  $("c-iso-row").style.display = "none";
+  refreshIsoLabel();
   onProfileChange(); onModeChange(); onDiskSourceChange();
   updateNamesPreview();
   openModal("modal-create");
@@ -737,7 +1039,9 @@ function onProfileChange() {
   $("c-manual").style.display = vm ? "none" : "";
   $("c-profiled").style.display = vm ? "" : "none";
   $("c-disk-source-manual").style.display = vm ? "none" : "";
-  $("c-disk-source-profile").style.display = vm ? "" : "";
+  // ⚠ 原来写的是 vm ? "" : ""（两边都显示）：手工配置时也会露出「完整克隆 / 引用母盘」，
+  //   而且两组 radio 同名 m-disk 会互相顶掉 checked。按是否选了样板机切换。
+  $("c-disk-source-profile").style.display = vm ? "" : "none";
   $("c-profile-hint").textContent = "";
   if (vm) {
     const ctrls = vm.controllers.map((c) => esc(c.label)).join("、") || "默认";
@@ -782,6 +1086,133 @@ function onDiskSourceChange() {
   $("c-disk-hint").className = src === "new" ? "hint" : "hint warn";
 }
 
+// ---------------- 创建：虚拟光驱 ISO ----------------
+let createIso = null;   // 已选中的镜像 {ds, path}
+let dsPicked = null;    // 浏览弹窗里当前选中 {ds, path}
+let dsCurPath = "";     // 浏览弹窗当前所在目录（相对路径，"a/b" 形式）
+
+$("c-iso-on").addEventListener("change", () => {
+  $("c-iso-row").style.display = $("c-iso-on").checked ? "" : "none";
+  if (!$("c-iso-on").checked) { createIso = null; refreshIsoLabel(); }
+});
+$("c-iso-browse").addEventListener("click", openDsBrowser);
+$("c-iso-clear").addEventListener("click", () => {
+  createIso = null; refreshIsoLabel();
+});
+function refreshIsoLabel() {
+  $("c-iso-label").textContent = createIso
+    ? `[${createIso.ds}] ${createIso.path}` : "未选择镜像";
+  $("c-iso-clear").style.display = createIso ? "" : "none";
+}
+
+function openDsBrowser() {
+  const stores = INV.datastores.filter((d) => d.accessible);
+  if (!stores.length) { toast("该主机没有可访问的数据存储", true); return; }
+  // 二层弹窗：不加遮罩（创建弹窗的遮罩保持），仅显示自身
+  $("modal-ds").classList.add("show");
+  $("ds-store").innerHTML = stores.map((d) =>
+    `<option value="${esc(d.name)}">${esc(d.name)}（剩余 ${d.free_gb}GB）</option>`).join("");
+  // 默认选中创建表单里选的目标存储
+  const cur = $("c-ds").value;
+  if (cur && stores.some((d) => d.name === cur)) { $("ds-store").value = cur; }
+  dsPicked = null;
+  $("ds-ok").disabled = true;
+  loadDsList("");
+}
+$("ds-store").addEventListener("change", () => {
+  dsPicked = null; $("ds-ok").disabled = true; loadDsList("");
+});
+$("ds-up").addEventListener("click", () => {
+  if (!dsCurPath) { return; }
+  const parts = dsCurPath.split("/");
+  parts.pop();
+  loadDsList(parts.join("/"));
+});
+// 目录下拉：选中即进入该子目录
+$("ds-dir").addEventListener("change", () => {
+  const d = $("ds-dir").value;
+  if (!d) { return; }
+  loadDsList(dsCurPath ? dsCurPath + "/" + d : d);
+});
+// 面包屑：点击某一级直接跳转
+$("ds-crumb").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-crumb]");
+  if (a) { loadDsList(a.dataset.crumb); }
+});
+$("ds-cancel").addEventListener("click", () => {
+  $("modal-ds").classList.remove("show");
+});
+$("ds-ok").addEventListener("click", () => {
+  if (!dsPicked) { return; }
+  createIso = dsPicked;
+  refreshIsoLabel();
+  $("modal-ds").classList.remove("show");
+});
+
+async function loadDsList(path) {
+  const ds = $("ds-store").value;
+  // 切换目录/存储后旧选中即失效
+  dsPicked = null;
+  $("ds-ok").disabled = true;
+  $("ds-status").textContent = "加载中…";
+  $("ds-list").innerHTML =
+    '<div class="row muted" style="justify-content:center">加载中…</div>';
+  try {
+    const data = await apiPost({ op: "browse_datastore", ds, path });
+    renderDsList(data);
+  } catch (e) {
+    $("ds-list").innerHTML = "";
+    $("ds-status").textContent = e.message;
+  }
+}
+const isIsoFile = (f) => f.name.toLowerCase().endsWith(".iso");
+function fmtSize(bytes) {
+  return bytes >= 1073741824
+    ? (bytes / 1073741824).toFixed(2) + " GB"
+    : (bytes / 1048576).toFixed(1) + " MB";
+}
+function renderDsList(data) {
+  dsCurPath = data.path || "";
+  const ds = $("ds-store").value;
+  // 面包屑：[存储] / 一级 / 二级（末级为当前目录，其余可点击跳转）
+  const parts = dsCurPath ? dsCurPath.split("/") : [];
+  let html = `<a data-crumb="">[${esc(ds)}]</a>`;
+  let acc = "";
+  parts.forEach((p, i) => {
+    acc = acc ? acc + "/" + p : p;
+    const last = i === parts.length - 1;
+    html += `<span class="sep">/</span>` + (last
+      ? `<span class="cur">${esc(p)}</span>`
+      : `<a data-crumb="${esc(acc)}">${esc(p)}</a>`);
+  });
+  $("ds-crumb").innerHTML = html;
+  // 目录下拉：列出当前层直接子目录，选中进入
+  const dirs = data.dirs || [];
+  $("ds-dir").innerHTML = dirs.length
+    ? `<option value="">— 进入子目录（${dirs.length} 个）—</option>`
+      + dirs.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("")
+    : `<option value="">（无子目录）</option>`;
+  // 列表只列当前目录的 ISO 镜像
+  const isos = (data.files || []).filter(isIsoFile);
+  $("ds-status").textContent =
+    `${dirs.length} 个子目录 · ${isos.length} 个 ISO 镜像`;
+  $("ds-list").innerHTML = isos.length
+    ? isos.map((f) => `<div class="row"><span>💿</span>
+        <div class="grow" style="cursor:pointer" data-iso="${esc(f.name)}">${esc(f.name)}</div>
+        <span class="muted">${fmtSize(f.size)}</span></div>`).join("")
+    : '<div class="row muted" style="justify-content:center">当前目录没有 ISO 镜像</div>';
+}
+$("ds-list").addEventListener("click", (e) => {
+  const iso = e.target.closest("[data-iso]");
+  if (!iso) { return; }
+  dsPicked = {
+    ds: $("ds-store").value,
+    path: (dsCurPath ? dsCurPath + "/" : "") + iso.dataset.iso,
+  };
+  $("ds-ok").disabled = false;
+  $("ds-status").textContent = `已选中：[${dsPicked.ds}] ${dsPicked.path}`;
+});
+
 $("c-cancel").addEventListener("click", closeModals);
 $("c-submit").addEventListener("click", async () => {
   const names = plannedNames();
@@ -792,6 +1223,11 @@ $("c-submit").addEventListener("click", async () => {
   const profileMoid = $("c-profile").value;
   const ds = $("c-ds").value;
   if (!ds) { toast("请选择数据存储", true); return; }
+  if ($("c-iso-on").checked && !createIso) {
+    toast("请先浏览并选择 ISO 镜像", true); return;
+  }
+  const isoPayload = $("c-iso-on").checked
+    ? { ds: createIso.ds, path: createIso.path } : null;
   let payload;
   if (profileMoid) {
     const src = diskSource();
@@ -800,6 +1236,7 @@ $("c-submit").addEventListener("click", async () => {
     if (src === "attach") {
       profile.src_disk_key = parseInt($("c-attached-disk").value, 10);
     }
+    if (isoPayload) { profile.iso = isoPayload; }
     payload = { op: "create_batch", names, profile };
   } else {
     payload = {
@@ -815,6 +1252,7 @@ $("c-submit").addEventListener("click", async () => {
         disk_size_gb: parseFloat($("c-size").value),
         provisioning: $("c-prov").value,
         network: $("c-network").value || null,
+        iso: isoPayload,
       },
     };
   }
@@ -823,7 +1261,10 @@ $("c-submit").addEventListener("click", async () => {
     const res = await apiPost(payload);
     closeModals();
     toast(`已提交 ${names.length} 台创建任务`);
-    startJobPolling(res.job_id);
+    const title = names.length === 1
+      ? `创建虚拟机 ${names[0]}`
+      : `批量创建 · ${names.length} 台`;
+    startJobPolling(res.job_id, title);
   } catch (e) {
     toast(e.message, true);
   } finally {
@@ -873,7 +1314,7 @@ function openEdit(vm) {
   $("e-disks").innerHTML = vm.disks.map((d) => `
     <div class="row" data-dkey="${d.key}">
       <div class="grow">${esc(d.label)}
-        <span class="muted">（${d.mode === "independent_nonpersistent" ? "非持久" : "持久"}${d.thin ? "·精简" : ""}）</span></div>
+        <span class="muted">${d.mode === "independent_nonpersistent" ? "非持久" : "持久"}${d.thin ? "·精简" : ""}</span></div>
       <label class="resize">扩容到 <input type="number" style="width:90px" class="resize-gb"
         data-orig="${d.capacity_gb}" value="${d.capacity_gb}" min="${d.capacity_gb}" step="1" /> GB</label>
       <label><input type="checkbox" class="rm-disk" /> 移除</label>
@@ -1021,14 +1462,33 @@ $("d-submit").addEventListener("click", async () => {
 });
 
 // ---------------- 任务进度 ----------------
-function startJobPolling(jobId) {
-  sessionStorage.setItem("esxi_admin_job", jobId);
+const JOB_KEY = "esxi_admin_job";
+const JOB_TITLE_KEY = "esxi_admin_job_title";
+// 结束后这条进度条停留多久再自动收起（让用户看清最终结果，之后不再挡着页面）
+const JOB_AUTOHIDE_MS = 4000;
+function clearJobSession() {
+  sessionStorage.removeItem(JOB_KEY);
+  sessionStorage.removeItem(JOB_TITLE_KEY);
+}
+function hideJobBar() {
+  clearTimeout(jobTimer);
+  $("jobbar").classList.remove("show");
+}
+// 标题随任务走（单台「创建虚拟机 X」/ 批量「批量创建 · N 台」），
+// 存 sessionStorage，刷新或重开悬浮窗恢复进度时一并恢复。
+function startJobPolling(jobId, title) {
+  clearTimeout(jobTimer);
+  sessionStorage.setItem(JOB_KEY, jobId);
+  if (title) { sessionStorage.setItem(JOB_TITLE_KEY, title); }
+  $("job-title").textContent =
+    title || sessionStorage.getItem(JOB_TITLE_KEY) || "任务进度";
+  $("job-bar").classList.remove("done", "err");
   $("jobbar").classList.add("show");
   pollJob();
 }
 async function pollJob() {
   clearTimeout(jobTimer);
-  const jobId = sessionStorage.getItem("esxi_admin_job");
+  const jobId = sessionStorage.getItem(JOB_KEY);
   if (!jobId) { return; }
   let job;
   try {
@@ -1038,33 +1498,59 @@ async function pollJob() {
     return;
   }
   if (!job || !job.found) {
-    sessionStorage.removeItem("esxi_admin_job");
-    $("jobbar").classList.remove("show");
+    clearJobSession();
+    hideJobBar();
     return;
   }
+  // ⚠ 后端任务对象只有 state/total/done/items/cancel，没有 failed 字段，
+  //   失败数必须从 items 里数（原来直接读 job.failed.length 会抛异常，
+  //   导致进度条卡在 100%、标题停在「批量任务」且永远不收起）。
+  const items = job.items || [];
+  const failed = items.filter((it) => it.state === "failed").length;
   const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
   $("job-bar").style.width = pct + "%";
-  $("job-count").textContent = `${job.done}/${job.total}　失败 ${job.failed.length}`
-    + (job.state === "running" ? "　进行中…" : job.state === "canceled" ? "　已取消" : "　完成");
+  $("job-bar").classList.toggle("done", job.state !== "running");
+  $("job-bar").classList.toggle("err", job.state !== "running" && failed > 0);
+  if (job.state === "running") {
+    $("job-count").textContent = `进行中… ${job.done}/${job.total} 台`;
+  } else if (job.state === "canceled") {
+    $("job-count").textContent =
+      `已取消 · 完成 ${job.done}/${job.total} 台` + (failed ? `，失败 ${failed} 台` : "");
+  } else if (failed) {
+    $("job-count").textContent =
+      `已结束 · 成功 ${job.done - failed} 台，失败 ${failed} 台`;
+  } else {
+    $("job-count").textContent = `全部完成 · ${job.done}/${job.total} 台`;
+  }
   $("job-cancel").style.display = job.state === "running" ? "" : "none";
-  $("job-items").innerHTML = job.items.map((it) =>
+  $("job-items").innerHTML = items.map((it) =>
     `<div class="${it.state === "failed" ? "err" : ""}">`
     + `${it.state === "ok" ? "✓" : it.state === "failed" ? "✕" : "…"} ${esc(it.name)}`
     + (it.error ? " — " + esc(it.error) : "") + "</div>").join("");
   if (job.state === "running") {
     jobTimer = setTimeout(pollJob, 1500);
-  } else {
-    sessionStorage.removeItem("esxi_admin_job");
-    loadInventory();
+    return;
   }
+  clearJobSession();
+  if (failed) {
+    toast(`创建结束：成功 ${job.done - failed} 台，失败 ${failed} 台`, true);
+  } else {
+    toast(`创建完成：${job.done} 台虚拟机已就绪`);
+  }
+  await loadInventory();
+  // 结果已落到 toast + 清单里，进度条不再需要，稍等片刻自动收起
+  jobTimer = setTimeout(hideJobBar, JOB_AUTOHIDE_MS);
 }
 $("job-cancel").addEventListener("click", async () => {
-  const jobId = sessionStorage.getItem("esxi_admin_job");
+  const jobId = sessionStorage.getItem(JOB_KEY);
   try { await apiPost({ op: "cancel_job", job_id: jobId }); }
   catch (e) { toast(e.message, true); }
 });
 $("job-close").addEventListener("click", () => {
-  $("jobbar").classList.remove("show");
+  // 「关闭」= 不再跟踪这个任务：连 sessionStorage 一起清，
+  // 否则刷新页面后 startJobPolling(resumeJob) 又会把条子拉回来
+  clearJobSession();
+  hideJobBar();
 });
 $("btn-refresh").addEventListener("click", loadInventory);
 $("filter").addEventListener("input", renderRows);
@@ -1076,8 +1562,31 @@ $("hostinfo").addEventListener("click", () => {
   }
 });
 
+// ---------------- 「添加硬盘 / 添加网卡」折叠（只在移动端看得出效果）----------------
+// 桌面端：.add-row-toggle 不显示、.add-row-body 是 display:contents —— 等于没有这层包装，布局不变。
+// 移动端：标题变可点按钮，控件收进 .add-row-body 默认隐藏，点一下才展开（卡片太长，别一进来就堆控件）。
+// 注意：控件是「挪进」body 而不是重建，所以上面按 id 绑的事件全部保留。
+document.querySelectorAll(".add-row").forEach((row) => {
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "add-row-toggle";
+  head.setAttribute("aria-expanded", "false");
+  head.innerHTML = `<span>${esc(row.dataset.label || "添加")}</span><span class="chev">▾</span>`;
+  const body = document.createElement("div");
+  body.className = "add-row-body";
+  while (row.firstChild) { body.appendChild(row.firstChild); }
+  row.appendChild(head);
+  row.appendChild(body);
+  head.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    const open = row.classList.toggle("open");
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+});
+
 loadInventory();
-const resumeJob = sessionStorage.getItem("esxi_admin_job");
+// 刷新/重开页面时恢复未跑完的任务进度（标题一并从 sessionStorage 恢复）
+const resumeJob = sessionStorage.getItem(JOB_KEY);
 if (resumeJob) { startJobPolling(resumeJob); }
 setInterval(() => { if (!document.hidden) { loadInventory(); } }, 15000);
 </script>
